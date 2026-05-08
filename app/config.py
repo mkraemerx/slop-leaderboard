@@ -22,6 +22,8 @@ class Config:
     secret_key: str | None
     sync_interval_minutes: int
 
+    github_webhook_secret: str | None
+
 
 def load_config(env: dict[str, str] | None = None) -> Config:
     src = env if env is not None else os.environ
@@ -38,4 +40,5 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         github_org=src.get("GITHUB_ORG") or None,
         secret_key=src.get("SECRET_KEY") or None,
         sync_interval_minutes=int(src.get("SYNC_INTERVAL_MINUTES", "60")),
+        github_webhook_secret=src.get("GITHUB_WEBHOOK_SECRET") or None,
     )

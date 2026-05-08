@@ -50,6 +50,7 @@ def cfg(tmp_path) -> Config:
         github_org="acme",
         secret_key="x" * 32,
         sync_interval_minutes=60,
+        github_webhook_secret=None,
     )
 
 
@@ -185,19 +186,16 @@ def test_logout_clears_session(cfg):
 
 
 def test_webhook_path_is_exempt_from_session_auth(cfg):
+    """The webhook endpoint exists in app.webhooks; the auth middleware
+    must NOT redirect requests to it. Whatever status code the real
+    handler returns, it must not be 303 → /login.
+    """
     fake = FakeOAuth()
     app = make_app(cfg, fake)
-
-    # Add a no-op webhook route so the middleware has something to forward
-    @app.post("/webhooks/github")
-    def webhook():
-        return {"ok": True}
-
     with TestClient(app, follow_redirects=False) as client:
-        # No session — but webhooks/* must not redirect to /login
         resp = client.post("/webhooks/github")
-        assert resp.status_code == 200
-        assert resp.json() == {"ok": True}
+        assert resp.status_code != 303
+        assert resp.headers.get("location") != "/login"
 
 
 def _make_no_org_cfg(tmp_path) -> Config:
@@ -209,6 +207,7 @@ def _make_no_org_cfg(tmp_path) -> Config:
         github_callback_url="http://test/auth/callback",
         github_org=None,                     # <-- no org configured
         secret_key="x" * 32, sync_interval_minutes=60,
+        github_webhook_secret=None,
     )
 
 
