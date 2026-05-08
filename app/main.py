@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import HTMLResponse
 
-from . import auth, db
+from . import auth, db, webhooks
 from .config import Config, load_config
 
 
@@ -59,6 +59,7 @@ def create_app(
     )
 
     app.include_router(auth.router)
+    app.include_router(webhooks.router)
 
     @app.get("/")
     def home(request: Request):
