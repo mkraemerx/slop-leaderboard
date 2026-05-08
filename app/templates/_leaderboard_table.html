@@ -1,0 +1,36 @@
+<table id="leaderboard-table" class="leaderboard">
+  <thead>
+    <tr>
+      <th>Rank</th>
+      <th>Author</th>
+      <th>Commits</th>
+      <th>Lines Changed</th>
+      <th>Tests Added</th>
+      <th>Refactor Ratio</th>
+      <th>Exercise Breadth</th>
+      <th>First Submissions</th>
+      <th>Active Days</th>
+      <th>Score</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.rank }}</td>
+        <td>{{ r.author_name }}</td>
+        <td>{{ r.commits }}</td>
+        <td title="code {{ r.category_lines.code }} · tests {{ r.category_lines.tests }} · docs {{ r.category_lines.docs }} · config {{ r.category_lines.config }}">
+          {{ r.lines_changed }}
+        </td>
+        <td>{{ r.tests_added }}</td>
+        <td>{{ "%.0f"|format(r.refactor_ratio * 100) }}%</td>
+        <td>{{ r.exercise_breadth }}</td>
+        <td>{{ r.first_submissions }}</td>
+        <td>{{ r.active_days }}</td>
+        <td>{{ r.score }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="empty">No commits in this scope yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard{% endblock %}
+{% block content %}
+<h1>Leaderboard</h1>
+
+<form class="filters" method="get" action="/leaderboard"
+      hx-get="/leaderboard/table" hx-target="#leaderboard-table"
+      hx-swap="outerHTML" hx-trigger="change">
+  <label>Time:
+    <select name="window">
+      {% for w, label in windows %}
+        <option value="{{ w }}" {% if w == window %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Exercise:
+    <select name="exercise">
+      <option value="">All</option>
+      {% for ex in exercises %}
+        <option value="{{ ex.ref_type }}:{{ ex.name }}"
+          {% if exercise == ex.ref_type ~ ':' ~ ex.name %}selected{% endif %}>
+          {{ ex.name }} ({{ ex.ref_type }})
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
+
+{% include "_leaderboard_table.html" %}
+{% endblock %}

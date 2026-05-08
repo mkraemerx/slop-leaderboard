@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Compare {{ exercise_name }}{% endblock %}
+{% block content %}
+<h1>{{ exercise_name }} <span class="badge">{{ exercise_type }}</span></h1>
+<p><a href="/exercises">← back to exercises</a></p>
+
+{% if solutions %}
+<table class="solutions">
+  <thead>
+    <tr>
+      <th>Fork</th><th>Insertions</th><th>Deletions</th>
+      <th>Files changed</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in solutions %}
+      <tr>
+        <td>{{ s.owner }}/{{ s.name }}</td>
+        <td>+{{ s.insertions }}</td>
+        <td>-{{ s.deletions }}</td>
+        <td>
+          <details>
+            <summary>{{ s.files_changed|length }} file(s)</summary>
+            <ul>
+              {% for f in s.files_changed %}<li>{{ f }}</li>{% endfor %}
+            </ul>
+          </details>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Structural similarity</h2>
+{% if similarities %}
+<table class="similarity">
+  <thead><tr><th>Pair</th><th>Jaccard</th><th>Verdict</th></tr></thead>
+  <tbody>
+    {% for sim in similarities %}
+      <tr>
+        <td>{{ fork_name(sim.fork_a_id) }} ↔ {{ fork_name(sim.fork_b_id) }}</td>
+        <td>{{ "%.0f"|format(sim.similarity * 100) }}%</td>
+        <td>{% if sim.similarity >= 0.6 %}similar approach
+            {% else %}different approach{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Only one fork has this exercise — nothing to compare.</p>
+{% endif %}
+
+{% else %}
+<p class="empty">No fork has this exercise yet.</p>
+{% endif %}
+{% endblock %}

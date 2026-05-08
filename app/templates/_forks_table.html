@@ -1,0 +1,33 @@
+<table id="forks-table" class="forks">
+  <thead>
+    <tr>
+      <th>Owner</th><th>Repo</th><th>Source</th>
+      <th>Sync state</th><th>Last analysed</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in forks %}
+      <tr>
+        <td>{{ f.owner }}</td>
+        <td><a href="{{ f.url }}" target="_blank" rel="noopener">{{ f.name }}</a></td>
+        <td>{{ f.discovered_via }}</td>
+        <td>
+          <span class="status status-{{ f.sync_status }}">{{ f.sync_status }}</span>
+          {% if f.sync_error %}
+            <span class="error" title="{{ f.sync_error }}">⚠</span>
+          {% endif %}
+        </td>
+        <td>{{ f.last_analysed_at or "—" }}</td>
+        <td>
+          <form method="post" action="/forks/{{ f.id }}/sync"
+                hx-post="/forks/{{ f.id }}/sync"
+                hx-target="#forks-table" hx-swap="outerHTML">
+            <button type="submit">Sync now</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="empty">No forks tracked yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

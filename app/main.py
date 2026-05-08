@@ -4,11 +4,10 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import HTMLResponse
 
-from . import auth, db, webhooks
+from . import auth, db, web, webhooks
 from .config import Config, load_config
 
 
@@ -60,13 +59,7 @@ def create_app(
 
     app.include_router(auth.router)
     app.include_router(webhooks.router)
-
-    @app.get("/")
-    def home(request: Request):
-        user = auth.session_user(request)
-        return HTMLResponse(
-            f"<h1>Welcome, {user['login']}</h1>"
-            f"<p><a href='/auth/logout'>Sign out</a></p>"
-        )
+    app.include_router(web.router)
+    web.mount_static(app)
 
     return app

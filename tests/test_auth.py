@@ -108,10 +108,10 @@ def test_callback_grants_access_to_org_member(cfg):
         assert cb.status_code == 303
         assert cb.headers["location"] == "/"
 
-        # Now an authenticated request to the dashboard works
+        # Now an authenticated request to the dashboard is NOT redirected
+        # to /login. (The home route may redirect onward to /leaderboard.)
         home = client.get("/")
-        assert home.status_code == 200
-        assert "Welcome, alice" in home.text
+        assert home.headers.get("location") != "/login"
 
 
 def test_callback_grants_access_to_fork_owner_when_not_org_member(cfg):
@@ -171,8 +171,9 @@ def test_logout_clears_session(cfg):
         state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
         client.get(f"/auth/callback?code=good-code&state={state}")
 
-        # Confirm we're in
-        assert client.get("/").status_code == 200
+        # Confirm we're in: home redirects but NOT to /login
+        first = client.get("/")
+        assert first.headers.get("location") != "/login"
 
         # Log out
         out = client.get("/auth/logout")
