@@ -12,7 +12,10 @@ from typing import Callable
 
 from . import jobs
 from .db import transaction
-from .git_ops import CommitInfo, clone_or_fetch, iter_new_commits
+from .git_ops import (
+    CommitInfo, clone_or_fetch, commits_reachable_from,
+    iter_new_commits, list_refs,
+)
 from .repos import update_sync_status
 from .storage import repo_path
 
@@ -36,21 +39,59 @@ def store_commits(conn: sqlite3.Connection, fork_id: int,
     inserted = 0
     with transaction(conn):
         for c in commits:
+            cat = c.by_category
+            def s(name: str, attr: str) -> int:
+                v = cat.get(name)
+                return getattr(v, attr) if v else 0
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO commits (
                     fork_id, sha, author_name, author_email, author_time,
-                    is_merge, parent_count, files_changed, insertions, deletions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_merge, parent_count, files_changed, insertions, deletions,
+                    code_insertions, code_deletions,
+                    tests_insertions, tests_deletions,
+                    docs_insertions, docs_deletions,
+                    config_insertions, config_deletions
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     fork_id, c.sha, c.author_name, c.author_email, c.author_time,
                     1 if c.is_merge else 0, c.parent_count,
                     c.files_changed, c.insertions, c.deletions,
+                    s("code", "insertions"), s("code", "deletions"),
+                    s("tests", "insertions"), s("tests", "deletions"),
+                    s("docs", "insertions"), s("docs", "deletions"),
+                    s("config", "insertions"), s("config", "deletions"),
                 ),
             )
             inserted += cur.rowcount or 0
     return inserted
+
+
+def rebuild_commit_refs(conn: sqlite3.Connection, fork_id: int,
+                       local_path: Path) -> int:
+    """Replace the (fork_id, commit, ref) mapping for `fork_id` based on the
+    current state of the local clone. Returns the row count.
+
+    Refs change between syncs (branches deleted, tags added), so we rebuild
+    rather than diff. Done in a single transaction so concurrent readers see
+    a consistent view.
+    """
+    refs = list_refs(local_path)
+    rows: list[tuple[int, str, str, str]] = []
+    for ref in refs:
+        for sha in commits_reachable_from(local_path, ref.tip_sha):
+            rows.append((fork_id, sha, ref.name, ref.ref_type))
+    with transaction(conn):
+        conn.execute("DELETE FROM commit_refs WHERE fork_id = ?", (fork_id,))
+        if rows:
+            conn.executemany(
+                "INSERT OR IGNORE INTO commit_refs "
+                "(fork_id, commit_sha, ref_name, ref_type) VALUES (?, ?, ?, ?)",
+                rows,
+            )
+    return len(rows)
 
 
 def known_commit_shas(conn: sqlite3.Connection, fork_id: int) -> set[str]:
@@ -89,6 +130,9 @@ def analyze_fork(
     seen = known_commit_shas(conn, fork_id)
     new_commits = list(iter_commits(local, seen))
     inserted = store_commits(conn, fork_id, new_commits)
+    # Refs are recomputed every sync so additions/deletions of branches/tags
+    # are reflected (FR-03 + needed by FR-04).
+    rebuild_commit_refs(conn, fork_id, local)
     return inserted
 
 
