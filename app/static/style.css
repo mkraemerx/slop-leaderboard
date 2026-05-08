@@ -1,0 +1,32 @@
+:root {
+  --bg: #f6f7f9; --fg: #222; --muted: #888;
+  --ok: #1a7a3a; --warn: #b35900; --err: #b00020; --pending: #555;
+  --border: #ddd;
+}
+* { box-sizing: border-box; }
+body { font: 14px/1.4 system-ui, sans-serif; color: var(--fg);
+       background: var(--bg); margin: 0; }
+main { max-width: 1100px; margin: 1em auto; padding: 0 1em; }
+
+.topnav { display: flex; gap: 1em; padding: 0.6em 1em;
+          background: white; border-bottom: 1px solid var(--border); }
+.topnav .spacer { flex: 1; }
+.topnav .user { color: var(--muted); }
+.topnav a { color: var(--fg); text-decoration: none; }
+
+table { width: 100%; border-collapse: collapse; background: white;
+        border: 1px solid var(--border); }
+th, td { padding: 0.4em 0.6em; border-bottom: 1px solid var(--border); text-align: left; }
+tbody tr:hover { background: #fafbff; }
+.empty { color: var(--muted); text-align: center; padding: 1em; }
+
+.status { padding: 0.1em 0.5em; border-radius: 0.5em; font-size: 0.85em; }
+.status-ok { color: var(--ok); }
+.status-running { color: var(--warn); }
+.status-pending { color: var(--pending); }
+.status-error { color: var(--err); }
+
+.filters { margin: 1em 0; display: flex; gap: 1em; align-items: center; }
+.add-fork { margin: 1em 0; }
+.badge { font-size: 0.75em; background: #eef; padding: 0.1em 0.5em;
+         border-radius: 0.5em; color: #335; }

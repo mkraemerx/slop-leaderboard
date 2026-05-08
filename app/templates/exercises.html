@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Exercises{% endblock %}
+{% block content %}
+<h1>Exercises</h1>
+
+{% if exercises %}
+<table class="exercises">
+  <thead>
+    <tr>
+      <th>Name</th><th>Type</th><th>Forks</th>
+      <th>First author</th><th>First commit</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for ex in exercises %}
+      <tr>
+        <td>{{ ex.name }}</td>
+        <td>{{ ex.ref_type }}</td>
+        <td>{{ ex.fork_count }}</td>
+        <td>{{ ex.first_author_name or "—" }}</td>
+        <td>{{ ex.first_commit_time or "—" }}</td>
+        <td>
+          <a href="/exercises/{{ ex.ref_type }}/{{ ex.name }}/comparison">Compare</a>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No exercises discovered yet. Forks need to be analysed first.</p>
+{% endif %}
+{% endblock %}

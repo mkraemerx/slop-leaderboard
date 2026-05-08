@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Leaderboard{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.10" defer></script>
+</head>
+<body>
+  <nav class="topnav">
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/exercises">Exercises</a>
+    <a href="/forks">Forks</a>
+    <span class="spacer"></span>
+    <span class="user">
+      {% if user %}{{ user.login }} · <a href="/auth/logout">sign out</a>{% endif %}
+    </span>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
