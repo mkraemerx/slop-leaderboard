@@ -16,20 +16,23 @@ def make_local_sync(origin: Path) -> Callable[[str, Path], None]:
     ignoring the URL argument entirely. Use as the `sync=` injection in tests
     so analysis logic can run without network access.
     """
+    from app.git_ops import _MIRROR_REFSPECS, _is_repo
+
     def _sync(_url: str, dest: Path) -> None:
-        if dest.exists() and (dest / ".git").exists():
+        if dest.exists() and _is_repo(dest):
             repo = pygit2.Repository(str(dest))
-            for remote in repo.remotes:
-                if remote.name == "origin":
-                    remote.fetch(callbacks=None,
-                                 prune=pygit2.GIT_FETCH_PRUNE)
-                    return
-            repo.remotes.create("origin", str(origin))
-            repo.remotes["origin"].fetch(callbacks=None,
-                                         prune=pygit2.GIT_FETCH_PRUNE)
+            remote = next((r for r in repo.remotes if r.name == "origin"), None)
+            if remote is None:
+                remote = repo.remotes.create("origin", str(origin))
+            remote.fetch(refspecs=_MIRROR_REFSPECS,
+                         callbacks=None, prune=pygit2.GIT_FETCH_PRUNE)
             return
         dest.parent.mkdir(parents=True, exist_ok=True)
-        pygit2.clone_repository(str(origin), str(dest), bare=False)
+        pygit2.clone_repository(str(origin), str(dest), bare=True)
+        repo = pygit2.Repository(str(dest))
+        repo.remotes["origin"].fetch(refspecs=_MIRROR_REFSPECS,
+                                     callbacks=None,
+                                     prune=pygit2.GIT_FETCH_PRUNE)
     return _sync
 
 

@@ -6,9 +6,17 @@ that constraint.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+from .classifier import CATEGORIES, classify
+
+
+@dataclass(frozen=True)
+class CategoryStats:
+    insertions: int = 0
+    deletions: int = 0
 
 
 @dataclass(frozen=True)
@@ -22,31 +30,49 @@ class CommitInfo:
     files_changed: int
     insertions: int
     deletions: int
+    by_category: dict[str, CategoryStats] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RefInfo:
+    name: str          # e.g. "main", "exercise-01", "v1.0"
+    ref_type: str      # "branch" | "tag"
+    tip_sha: str
+
+
+_MIRROR_REFSPECS = [
+    "+refs/heads/*:refs/heads/*",
+    "+refs/tags/*:refs/tags/*",
+]
 
 
 def clone_or_fetch(url: str, dest: Path) -> None:
-    """Clone `url` to `dest` as a bare-ish mirror, or fetch into an existing
-    clone. We use `--mirror`-style refspecs so all branches and tags land
-    locally — exercises (FR-04) need both.
+    """Clone `url` to `dest` as a bare mirror, or fetch into an existing
+    clone. We use bare clones + explicit mirror refspecs so every branch and
+    tag becomes a local ref — FR-03/FR-04 walk those directly.
     """
     import pygit2
 
-    if dest.exists() and (dest / ".git").exists():
+    if dest.exists() and _is_repo(dest):
         repo = pygit2.Repository(str(dest))
-        for remote in repo.remotes:
-            if remote.name == "origin":
-                remote.fetch(callbacks=None, prune=pygit2.GIT_FETCH_PRUNE)
-                return
-        # No origin? Add one and fetch.
-        repo.remotes.create("origin", url)
-        repo.remotes["origin"].fetch(callbacks=None,
-                                     prune=pygit2.GIT_FETCH_PRUNE)
+        remote = next((r for r in repo.remotes if r.name == "origin"), None)
+        if remote is None:
+            remote = repo.remotes.create("origin", url)
+        remote.fetch(refspecs=_MIRROR_REFSPECS,
+                     callbacks=None, prune=pygit2.GIT_FETCH_PRUNE)
         return
 
-    # Fresh clone. We don't need a working copy, but pygit2's
-    # clone_repository does a full clone by default; that's fine for v1.
     dest.parent.mkdir(parents=True, exist_ok=True)
-    pygit2.clone_repository(url, str(dest), bare=False)
+    pygit2.clone_repository(url, str(dest), bare=True)
+    repo = pygit2.Repository(str(dest))
+    repo.remotes["origin"].fetch(refspecs=_MIRROR_REFSPECS,
+                                 callbacks=None,
+                                 prune=pygit2.GIT_FETCH_PRUNE)
+
+
+def _is_repo(path: Path) -> bool:
+    """True for both regular and bare clones we own."""
+    return (path / "HEAD").exists() or (path / ".git").exists()
 
 
 def known_shas(repo_path: Path) -> set[str]:
@@ -101,32 +127,75 @@ def iter_new_commits(
 def _commit_info(repo, commit) -> CommitInfo:
     parent_count = len(commit.parents)
     is_merge = parent_count > 1
-    insertions = deletions = files_changed = 0
     if parent_count == 0:
-        # Root commit: diff against empty tree.
         diff = commit.tree.diff_to_tree(swap=True)
     elif parent_count == 1:
         diff = repo.diff(commit.parents[0], commit)
     else:
-        # Merge commit: diff against first parent (matches `git log -m -1`).
         diff = repo.diff(commit.parents[0], commit)
     stats = diff.stats
-    insertions = stats.insertions
-    deletions = stats.deletions
-    files_changed = stats.files_changed
+    by_category = _diff_by_category(diff)
     author = commit.author
-    when_dt = _author_dt(author)
     return CommitInfo(
         sha=str(commit.id),
         author_name=author.name,
         author_email=author.email,
-        author_time=when_dt,
+        author_time=_author_dt(author),
         parent_count=parent_count,
         is_merge=is_merge,
-        files_changed=files_changed,
-        insertions=insertions,
-        deletions=deletions,
+        files_changed=stats.files_changed,
+        insertions=stats.insertions,
+        deletions=stats.deletions,
+        by_category=by_category,
     )
+
+
+def _diff_by_category(diff) -> dict[str, CategoryStats]:
+    """Sum insertions/deletions per category by classifying each patch's
+    file path. Renames are counted under the new path's category."""
+    sums: dict[str, list[int]] = {c: [0, 0] for c in CATEGORIES}
+    for patch in diff:
+        delta = patch.delta
+        path = delta.new_file.path or delta.old_file.path
+        category = classify(path)
+        line_stats = patch.line_stats  # (context, additions, deletions)
+        sums[category][0] += line_stats[1]
+        sums[category][1] += line_stats[2]
+    return {c: CategoryStats(insertions=ins, deletions=dele)
+            for c, (ins, dele) in sums.items() if ins or dele}
+
+
+def list_refs(repo_path: Path) -> list[RefInfo]:
+    """Enumerate every local branch and tag. Lightweight tags and annotated
+    tags are both reduced to their target commit via `peel(Commit)`."""
+    import pygit2
+
+    repo = pygit2.Repository(str(repo_path))
+    out: list[RefInfo] = []
+    for ref_name in repo.references:
+        ref = repo.references[ref_name]
+        try:
+            tip = ref.peel(pygit2.Commit)
+        except (KeyError, pygit2.GitError, ValueError):
+            continue
+        if ref_name.startswith("refs/heads/"):
+            out.append(RefInfo(name=ref_name[len("refs/heads/"):],
+                               ref_type="branch", tip_sha=str(tip.id)))
+        elif ref_name.startswith("refs/tags/"):
+            out.append(RefInfo(name=ref_name[len("refs/tags/"):],
+                               ref_type="tag", tip_sha=str(tip.id)))
+    return out
+
+
+def commits_reachable_from(repo_path: Path, tip_sha: str) -> set[str]:
+    """SHAs of every commit reachable from `tip_sha` (inclusive)."""
+    import pygit2
+
+    repo = pygit2.Repository(str(repo_path))
+    out: set[str] = set()
+    for commit in repo.walk(pygit2.Oid(hex=tip_sha), pygit2.GIT_SORT_NONE):
+        out.add(str(commit.id))
+    return out
 
 
 def _author_dt(sig) -> str:

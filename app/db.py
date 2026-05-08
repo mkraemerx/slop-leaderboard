@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 SCHEMA_SQL = """
@@ -51,11 +51,30 @@ CREATE TABLE IF NOT EXISTS commits (
     files_changed INTEGER NOT NULL DEFAULT 0,
     insertions INTEGER NOT NULL DEFAULT 0,
     deletions INTEGER NOT NULL DEFAULT 0,
+    code_insertions INTEGER NOT NULL DEFAULT 0,
+    code_deletions INTEGER NOT NULL DEFAULT 0,
+    tests_insertions INTEGER NOT NULL DEFAULT 0,
+    tests_deletions INTEGER NOT NULL DEFAULT 0,
+    docs_insertions INTEGER NOT NULL DEFAULT 0,
+    docs_deletions INTEGER NOT NULL DEFAULT 0,
+    config_insertions INTEGER NOT NULL DEFAULT 0,
+    config_deletions INTEGER NOT NULL DEFAULT 0,
     UNIQUE (fork_id, sha)
 );
 
 CREATE INDEX IF NOT EXISTS idx_commits_fork ON commits(fork_id);
 CREATE INDEX IF NOT EXISTS idx_commits_email ON commits(author_email);
+
+-- Branches/tags that contain each commit, refreshed on every analysis run.
+CREATE TABLE IF NOT EXISTS commit_refs (
+    fork_id INTEGER NOT NULL REFERENCES forks(id) ON DELETE CASCADE,
+    commit_sha TEXT NOT NULL,
+    ref_name TEXT NOT NULL,
+    ref_type TEXT NOT NULL CHECK (ref_type IN ('branch', 'tag')),
+    PRIMARY KEY (fork_id, commit_sha, ref_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_refs_lookup ON commit_refs(fork_id, ref_name);
 
 CREATE TABLE IF NOT EXISTS analysis_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
