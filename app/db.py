@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 SCHEMA_SQL = """
@@ -38,6 +38,40 @@ CREATE TABLE IF NOT EXISTS forks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_forks_root_repo ON forks(root_repo_id);
+
+CREATE TABLE IF NOT EXISTS commits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fork_id INTEGER NOT NULL REFERENCES forks(id) ON DELETE CASCADE,
+    sha TEXT NOT NULL,
+    author_name TEXT NOT NULL,
+    author_email TEXT NOT NULL,
+    author_time TEXT NOT NULL,
+    is_merge INTEGER NOT NULL DEFAULT 0,
+    parent_count INTEGER NOT NULL DEFAULT 0,
+    files_changed INTEGER NOT NULL DEFAULT 0,
+    insertions INTEGER NOT NULL DEFAULT 0,
+    deletions INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (fork_id, sha)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commits_fork ON commits(fork_id);
+CREATE INDEX IF NOT EXISTS idx_commits_email ON commits(author_email);
+
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fork_id INTEGER NOT NULL REFERENCES forks(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'sync'
+        CHECK (kind IN ('sync', 'full')),
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'running', 'done', 'failed')),
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON analysis_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_fork ON analysis_jobs(fork_id);
 """
 
 
@@ -56,6 +90,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     row = cur.fetchone()
     if row is None:
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+    else:
+        # Idempotent bump: schema files use IF NOT EXISTS, so a higher
+        # in-code version simply records that the live schema now matches.
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
 
 @contextmanager

@@ -9,6 +9,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterable
 
+from . import jobs
 from .db import transaction
 from .github import GitHubClient, GitHubError, RepoRef, parse_github_url
 
@@ -156,6 +157,9 @@ def _insert_fork(
             (root.id, ref.url, ref.owner, ref.name, discovered_via),
         )
         fork_id = cur.lastrowid
+    # FR-02 AC1: every newly registered fork is enqueued for analysis
+    # immediately. The worker picks it up on its next tick.
+    jobs.enqueue_analysis(conn, fork_id, kind="full")
     row = conn.execute(
         """
         SELECT id, root_repo_id, url, owner, name, discovered_via,
