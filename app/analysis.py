@@ -1,0 +1,119 @@
+"""High-level fork analysis pipeline (FR-02).
+
+This module is the orchestration layer that ties storage, git, and the
+job queue together. It is intentionally synchronous so it can run inside an
+APScheduler thread (ASSUMPTION-007).
+"""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Callable
+
+from . import jobs
+from .db import transaction
+from .git_ops import CommitInfo, clone_or_fetch, iter_new_commits
+from .repos import update_sync_status
+from .storage import repo_path
+
+
+# Type alias for the git callable so tests can swap in a fake.
+SyncCallable = Callable[[str, Path], None]
+IterCallable = Callable[[Path, set[str]], "list[CommitInfo] | "  # iterable
+                                          "tuple[CommitInfo, ...]"]
+
+
+def store_commits(conn: sqlite3.Connection, fork_id: int,
+                  commits: list[CommitInfo]) -> int:
+    """INSERT OR IGNORE every commit. Returns rows actually inserted.
+
+    `INSERT OR IGNORE` makes the operation idempotent under restart: a commit
+    inserted in a previous run is silently skipped on a retry, satisfying
+    QR-02 ("restarting mid-analysis does not produce duplicate records").
+    """
+    if not commits:
+        return 0
+    inserted = 0
+    with transaction(conn):
+        for c in commits:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO commits (
+                    fork_id, sha, author_name, author_email, author_time,
+                    is_merge, parent_count, files_changed, insertions, deletions
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    fork_id, c.sha, c.author_name, c.author_email, c.author_time,
+                    1 if c.is_merge else 0, c.parent_count,
+                    c.files_changed, c.insertions, c.deletions,
+                ),
+            )
+            inserted += cur.rowcount or 0
+    return inserted
+
+
+def known_commit_shas(conn: sqlite3.Connection, fork_id: int) -> set[str]:
+    rows = conn.execute(
+        "SELECT sha FROM commits WHERE fork_id = ?", (fork_id,)
+    ).fetchall()
+    return {r["sha"] for r in rows}
+
+
+def analyze_fork(
+    conn: sqlite3.Connection,
+    fork_id: int,
+    base_repos_dir: Path,
+    *,
+    sync: SyncCallable = clone_or_fetch,
+    iter_commits=iter_new_commits,
+) -> int:
+    """Run a full analysis cycle for one fork.
+
+    Returns the number of newly inserted commits. Raises any exception from
+    the sync/iter callables; the caller is responsible for catching it and
+    marking the fork's sync status accordingly (so existing data is left
+    intact on failure — FR-02 AC3).
+    """
+    row = conn.execute(
+        "SELECT id, url, owner, name FROM forks WHERE id = ?", (fork_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"no such fork: {fork_id}")
+
+    update_sync_status(conn, fork_id, "running")
+
+    local = repo_path(base_repos_dir, row["owner"], row["name"])
+    sync(row["url"], local)
+
+    seen = known_commit_shas(conn, fork_id)
+    new_commits = list(iter_commits(local, seen))
+    inserted = store_commits(conn, fork_id, new_commits)
+    return inserted
+
+
+def run_one_job(
+    conn: sqlite3.Connection,
+    base_repos_dir: Path,
+    *,
+    sync: SyncCallable = clone_or_fetch,
+    iter_commits=iter_new_commits,
+) -> jobs.Job | None:
+    """Pop the next queued job, run it, and update fork + job status.
+
+    Returns the (now finished) Job, or None if there was nothing to run.
+    """
+    job = jobs.claim_next(conn)
+    if job is None:
+        return None
+    try:
+        analyze_fork(conn, job.fork_id, base_repos_dir,
+                     sync=sync, iter_commits=iter_commits)
+    except Exception as exc:  # noqa: BLE001 — surface any failure as error
+        msg = f"{type(exc).__name__}: {exc}"
+        update_sync_status(conn, job.fork_id, "error", error=msg)
+        jobs.mark_failed(conn, job.id, msg)
+        return jobs.get_job(conn, job.id)
+    update_sync_status(conn, job.fork_id, "ok", mark_analysed=True)
+    jobs.mark_done(conn, job.id)
+    return jobs.get_job(conn, job.id)
