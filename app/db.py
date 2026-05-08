@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 SCHEMA_SQL = """
@@ -75,6 +75,19 @@ CREATE TABLE IF NOT EXISTS commit_refs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_commit_refs_lookup ON commit_refs(fork_id, ref_name);
+
+-- Root repo branches/tags & reachable commit SHAs. Refreshed each sync so
+-- exercises (FR-04) can be derived as the set difference between fork refs
+-- and these.
+CREATE TABLE IF NOT EXISTS root_refs (
+    ref_name TEXT NOT NULL,
+    ref_type TEXT NOT NULL CHECK (ref_type IN ('branch', 'tag')),
+    PRIMARY KEY (ref_name, ref_type)
+);
+
+CREATE TABLE IF NOT EXISTS root_commits (
+    sha TEXT PRIMARY KEY
+);
 
 CREATE TABLE IF NOT EXISTS analysis_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
