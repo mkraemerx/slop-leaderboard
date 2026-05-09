@@ -14,11 +14,16 @@
      counted as the same person.</p>
 
   <form method="post" action="/admin/aliases/add" class="admin-form">
+    <!-- type=text rather than type=email: git accepts any string as
+         author email, including non-RFC forms like
+         `41898282+claude[bot]@users.noreply.github.com`. -->
     <label>Alias (commit email):
-      <input type="email" name="alias_email" required placeholder="alice@personal.com">
+      <input type="text" name="alias_email" required
+             placeholder="alice@personal.com" autocomplete="off">
     </label>
     <label>Canonical (real person):
-      <input type="email" name="canonical_email" required placeholder="alice@work.com">
+      <input type="text" name="canonical_email" required
+             placeholder="alice@work.com" autocomplete="off">
     </label>
     <label>Display name (optional):
       <input type="text" name="display_name" placeholder="Alice Smith">
@@ -57,7 +62,8 @@
 
   <form method="post" action="/admin/aliases/ignore" class="admin-form">
     <label>Email to ignore:
-      <input type="email" name="email" required placeholder="bot@example.com">
+      <input type="text" name="email" required
+             placeholder="bot@example.com" autocomplete="off">
     </label>
     <button type="submit">Ignore</button>
   </form>
