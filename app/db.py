@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 SCHEMA_SQL = """
@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS root_refs (
 
 CREATE TABLE IF NOT EXISTS root_commits (
     sha TEXT PRIMARY KEY
+);
+
+-- Author identity normalisation. Both tables are case-insensitive on the
+-- email column so the same address with different capitalisation maps the
+-- same way (Git authors are inconsistent about this).
+CREATE TABLE IF NOT EXISTS author_aliases (
+    alias_email TEXT PRIMARY KEY COLLATE NOCASE,
+    canonical_email TEXT NOT NULL COLLATE NOCASE,
+    display_name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ignored_authors (
+    email TEXT PRIMARY KEY COLLATE NOCASE
 );
 
 CREATE TABLE IF NOT EXISTS analysis_jobs (

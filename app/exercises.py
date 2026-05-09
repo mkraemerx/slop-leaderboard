@@ -97,17 +97,26 @@ def list_exercises(conn: sqlite3.Connection) -> list[Exercise]:
 def _first_author(conn: sqlite3.Connection, ref_name: str, ref_type: str
                   ) -> tuple[str, str, str] | None:
     """The author of the earliest non-root commit reachable from this ref in
-    any tracked fork. Returns (name, email, time) or None if every commit is
-    shared with root (which would indicate a degenerate setup)."""
+    any tracked fork, with author_aliases applied and ignored_authors
+    filtered out. Returns (name, email, time) or None."""
     row = conn.execute(
         """
-        SELECT c.author_name, c.author_email, c.author_time
+        SELECT
+            COALESCE(a.display_name, c.author_name)     AS author_name,
+            COALESCE(a.canonical_email, c.author_email) AS author_email,
+            c.author_time
         FROM commit_refs cr
         JOIN commits c
           ON c.fork_id = cr.fork_id AND c.sha = cr.commit_sha
+        LEFT JOIN author_aliases a
+          ON a.alias_email = c.author_email
         WHERE cr.ref_name = ?
           AND cr.ref_type = ?
           AND c.sha NOT IN (SELECT sha FROM root_commits)
+          AND NOT EXISTS (
+              SELECT 1 FROM ignored_authors i
+              WHERE i.email = COALESCE(a.canonical_email, c.author_email)
+          )
         ORDER BY c.author_time ASC, c.id ASC
         LIMIT 1
         """,

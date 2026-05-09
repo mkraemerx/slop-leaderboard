@@ -88,12 +88,14 @@ def compute_leaderboard(
 
     where_sql = " AND ".join(f"({w})" for w in where)
 
-    # Stage 1: dedupe by SHA so cross-fork copies aren't double-counted.
+    # Three-stage CTE so identity normalisation is local to the SQL:
+    #  1. `scoped`   — apply window / exercise / merge / root filters, dedup by SHA.
+    #  2. `mapped`   — substitute author_email via author_aliases, drop ignored emails.
+    #  3. outer SELECT — aggregate by canonical email.
     sql = f"""
     WITH scoped AS (
         SELECT
             c.sha,
-            -- pick a stable representative row per SHA
             MIN(c.id) AS id,
             c.author_email,
             c.author_name,
@@ -106,10 +108,25 @@ def compute_leaderboard(
         FROM commits c
         WHERE {where_sql}
         GROUP BY c.sha
+    ),
+    mapped AS (
+        SELECT
+            s.*,
+            COALESCE(a.canonical_email, s.author_email) AS canonical_email,
+            a.display_name AS alias_display_name
+        FROM scoped s
+        LEFT JOIN author_aliases a
+          ON a.alias_email = s.author_email
+        WHERE NOT EXISTS (
+            SELECT 1 FROM ignored_authors i
+            WHERE i.email = COALESCE(a.canonical_email, s.author_email)
+        )
     )
     SELECT
-        author_email,
-        MAX(author_name) AS author_name,
+        LOWER(canonical_email) AS author_email,
+        -- Prefer an explicit display_name override from any alias in
+        -- the group; fall back to a commit's author_name.
+        COALESCE(MAX(alias_display_name), MAX(author_name)) AS author_name,
         COUNT(*) AS commits,
         COALESCE(SUM(insertions), 0) AS insertions,
         COALESCE(SUM(deletions), 0) AS deletions,
@@ -119,8 +136,8 @@ def compute_leaderboard(
         COALESCE(SUM(tests_insertions + tests_deletions), 0) AS tests_lines,
         COALESCE(SUM(docs_insertions + docs_deletions), 0) AS docs_lines,
         COALESCE(SUM(config_insertions + config_deletions), 0) AS config_lines
-    FROM scoped
-    GROUP BY author_email
+    FROM mapped
+    GROUP BY LOWER(canonical_email)
     """
     rows = conn.execute(sql, params).fetchall()
 
@@ -165,54 +182,79 @@ def compute_leaderboard(
 
 
 def _exercise_breadth(conn: sqlite3.Connection) -> dict[str, int]:
+    """Breadth keyed by canonical_email (LOWER), after applying aliases
+    and filtering ignored authors."""
     rows = conn.execute(
         """
-        SELECT c.author_email,
-               COUNT(DISTINCT cr.ref_name || '|' || cr.ref_type) AS breadth
-        FROM commits c
-        JOIN commit_refs cr
-          ON cr.fork_id = c.fork_id AND cr.commit_sha = c.sha
-        WHERE c.is_merge = 0
-          AND NOT EXISTS (
-              SELECT 1 FROM root_refs r
-              WHERE r.ref_name = cr.ref_name AND r.ref_type = cr.ref_type
-          )
-          AND c.sha NOT IN (SELECT sha FROM root_commits)
-        GROUP BY c.author_email
+        WITH base AS (
+            SELECT cr.ref_name, cr.ref_type, cr.fork_id, cr.commit_sha,
+                   c.author_email
+            FROM commits c
+            JOIN commit_refs cr
+              ON cr.fork_id = c.fork_id AND cr.commit_sha = c.sha
+            WHERE c.is_merge = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM root_refs r
+                  WHERE r.ref_name = cr.ref_name AND r.ref_type = cr.ref_type
+              )
+              AND c.sha NOT IN (SELECT sha FROM root_commits)
+        ),
+        mapped AS (
+            SELECT b.ref_name, b.ref_type,
+                   COALESCE(a.canonical_email, b.author_email) AS canonical_email
+            FROM base b
+            LEFT JOIN author_aliases a ON a.alias_email = b.author_email
+            WHERE NOT EXISTS (
+                SELECT 1 FROM ignored_authors i
+                WHERE i.email = COALESCE(a.canonical_email, b.author_email)
+            )
+        )
+        SELECT LOWER(canonical_email) AS author_email,
+               COUNT(DISTINCT ref_name || '|' || ref_type) AS breadth
+        FROM mapped
+        GROUP BY LOWER(canonical_email)
         """
     ).fetchall()
     return {r["author_email"]: int(r["breadth"]) for r in rows}
 
 
 def _first_submissions(conn: sqlite3.Connection) -> dict[str, int]:
-    """Count exercises where this email is the first non-root committer.
-
-    We replay the exercises.first_author logic in pure SQL so the leaderboard
-    can be computed without going through the Python layer.
-    """
+    """First-submission counts keyed by canonical_email (LOWER)."""
     rows = conn.execute(
         """
-        WITH first_per_exercise AS (
+        WITH base AS (
             SELECT cr.ref_name, cr.ref_type,
-                   c.author_email,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY cr.ref_name, cr.ref_type
-                       ORDER BY c.author_time ASC, c.id ASC
-                   ) AS rn
+                   c.author_time, c.id,
+                   COALESCE(a.canonical_email, c.author_email) AS canonical_email
             FROM commit_refs cr
             JOIN commits c
               ON c.fork_id = cr.fork_id AND c.sha = cr.commit_sha
+            LEFT JOIN author_aliases a
+              ON a.alias_email = c.author_email
             WHERE NOT EXISTS (
                 SELECT 1 FROM root_refs r
                 WHERE r.ref_name = cr.ref_name AND r.ref_type = cr.ref_type
             )
             AND c.sha NOT IN (SELECT sha FROM root_commits)
             AND c.is_merge = 0
+            AND NOT EXISTS (
+                SELECT 1 FROM ignored_authors i
+                WHERE i.email = COALESCE(a.canonical_email, c.author_email)
+            )
+        ),
+        first_per_exercise AS (
+            SELECT ref_name, ref_type, canonical_email,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ref_name, ref_type
+                       ORDER BY author_time ASC, id ASC
+                   ) AS rn
+            FROM base
         )
-        SELECT author_email, COUNT(*) AS first_count
+        SELECT LOWER(canonical_email) AS author_email,
+               COUNT(*) AS first_count
         FROM first_per_exercise
         WHERE rn = 1
-        GROUP BY author_email
+        GROUP BY LOWER(canonical_email)
         """
     ).fetchall()
     return {r["author_email"]: int(r["first_count"]) for r in rows}
