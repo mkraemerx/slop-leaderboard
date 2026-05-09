@@ -57,7 +57,15 @@ def compute_leaderboard(
     if window not in WINDOW_DAYS:
         raise ValueError(f"unknown window: {window!r}")
 
-    where = ["c.is_merge = 0"]
+    # Always exclude:
+    # - merge commits (FR-02 AC4)
+    # - commits inherited from the configured root repo (so the
+    #   leaderboard reflects participant work, not the starter material
+    #   the root was forked from).
+    where = [
+        "c.is_merge = 0",
+        "c.sha NOT IN (SELECT sha FROM root_commits)",
+    ]
     params: list[object] = []
     days = WINDOW_DAYS[window]
     if days is not None:
@@ -66,9 +74,7 @@ def compute_leaderboard(
 
     if exercise is not None:
         ref_name, ref_type = exercise
-        # Only commits reachable from the exercise ref (in any fork)
-        # AND not part of the root commit graph (so the inherited base
-        # commits don't dominate the count).
+        # Restrict to commits reachable from the exercise ref in any fork.
         where.append("""
             EXISTS (
                 SELECT 1 FROM commit_refs cr
@@ -77,7 +83,6 @@ def compute_leaderboard(
                   AND cr.ref_name = ?
                   AND cr.ref_type = ?
             )
-            AND c.sha NOT IN (SELECT sha FROM root_commits)
         """)
         params.extend([ref_name, ref_type])
 

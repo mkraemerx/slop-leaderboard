@@ -257,16 +257,27 @@ def test_unknown_window_raises(db):
         leaderboard.compute_leaderboard(db, window="2d")  # type: ignore[arg-type]
 
 
-def test_commit_seen_in_two_forks_only_counted_once(db, tmp_path: Path):
-    """Cross-fork copies of the same commit (e.g. instructor's init)
-    must not inflate the author's stats."""
+def test_root_commits_excluded_from_all_time_leaderboard(db, tmp_path: Path):
+    """The leaderboard reflects participant work. Commits that exist on
+    the configured root (e.g. starter material or commits inherited from
+    the root's upstream) are excluded regardless of scope."""
     _seed_with_two_authors(db, tmp_path)
     rows = leaderboard.compute_leaderboard(db)
-    # instructor's init commit appears in root, alice, bob — but is in
-    # root_commits when filtering by exercise. For all-time leaderboard
-    # without exercise scope, the instructor will be present once with
-    # commits=1, not 3.
-    instructor = next((r for r in rows
-                       if r.author_email == "ins@example.com"), None)
-    assert instructor is not None
-    assert instructor.commits == 1
+    emails = {r.author_email for r in rows}
+    # The instructor's init commit lives in root_commits — must not
+    # appear on the leaderboard.
+    assert "ins@example.com" not in emails
+    # Participants who committed beyond the root still show up.
+    assert "alice@example.com" in emails
+    assert "bob@example.com" in emails
+
+
+def test_root_commits_excluded_across_time_windows(db, tmp_path: Path):
+    """The exclusion applies even when a time window is set."""
+    _seed_with_two_authors(db, tmp_path)
+    for window in ("all", "90d", "30d", "7d"):
+        rows = leaderboard.compute_leaderboard(db, window=window)
+        emails = {r.author_email for r in rows}
+        assert "ins@example.com" not in emails, (
+            f"instructor appeared on the {window} leaderboard"
+        )
