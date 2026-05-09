@@ -177,6 +177,60 @@ def test_discover_tick_swallows_github_errors(tmp_path: Path):
         sched._discover_tick()
 
 
+def test_discover_tick_refreshes_root_when_root_is_configured(tmp_path: Path):
+    """Without periodic root refresh, root_commits would go stale and
+    instructor-pushed starter commits would be miscredited as participant
+    work in the first-author column and leaderboard."""
+    cfg = _cfg(tmp_path, token="ghp_xyz")
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+
+    sched = scheduler.Scheduler(cfg)
+    with patch("app.scheduler.exercises.refresh_root") as mock_refresh, \
+         patch("app.scheduler.repos.discover_forks", return_value=[]):
+        sched._discover_tick()
+    assert mock_refresh.called
+    # Token-aware sync was passed through so private roots can be cloned.
+    args, kwargs = mock_refresh.call_args
+    # Bound methods compare equal but aren't the same object instance.
+    assert kwargs.get("sync") == sched._git_sync
+
+
+def test_discover_tick_skips_root_refresh_when_no_root_configured(tmp_path: Path):
+    """If the user hasn't seeded a root yet, the tick must not crash
+    trying to refresh it."""
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    # NOTE: no set_root_repo
+
+    sched = scheduler.Scheduler(cfg)
+    with patch("app.scheduler.exercises.refresh_root") as mock_refresh:
+        sched._discover_tick()
+    assert not mock_refresh.called
+
+
+def test_discover_tick_swallows_root_refresh_failures(tmp_path: Path):
+    """A network blip during root refresh must not abort the rest of
+    the tick (discovery + periodic resync)."""
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    add_fork_manual(conn, "https://github.com/alice/root")
+    jobs.mark_done(conn, jobs.claim_next(conn).id)  # drain auto-enqueued
+
+    sched = scheduler.Scheduler(cfg)
+    with patch("app.scheduler.exercises.refresh_root",
+               side_effect=RuntimeError("network down")):
+        sched._discover_tick()  # must not raise
+
+    # The resync still ran: alice has a fresh queued sync job.
+    queued = [j for j in jobs.jobs_for_fork(conn, 1) if j.status == "queued"]
+    assert len(queued) == 1
+
+
 # --- periodic resync ------------------------------------------------------
 
 def test_resync_enqueues_sync_for_errored_fork(tmp_path: Path):

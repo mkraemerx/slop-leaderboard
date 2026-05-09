@@ -5,8 +5,10 @@ Two interval jobs run inside a single APScheduler BackgroundScheduler:
 - `_analysis_tick`: drains the analysis_jobs queue by calling
   `analysis.run_one_job` until it returns None. Runs every 30 seconds.
 - `_discover_tick`: every `SYNC_INTERVAL_MINUTES`,
-  (1) calls `repos.discover_forks` to pick up new forks of the root,
-  (2) enqueues a fresh `sync` job for every existing fork that has no
+  (1) refreshes the configured root repo (root_refs + root_commits) so
+      starter / instructor commits never get attributed to participants,
+  (2) calls `repos.discover_forks` to pick up new forks of the root,
+  (3) enqueues a fresh `sync` job for every existing fork that has no
       queued or running work — this both keeps fresh forks fresh and
       retries forks stuck in `error` state.
 
@@ -22,7 +24,7 @@ from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import analysis, jobs, repos
+from . import analysis, exercises, jobs, repos
 from .config import Config
 from .db import connect, init_schema
 from .git_ops import clone_or_fetch
@@ -78,17 +80,16 @@ class Scheduler:
 
     # --- ticks -------------------------------------------------------------
 
+    def _git_sync(self, url: str, dest: Path) -> None:
+        """Token-aware clone/fetch used by every tick."""
+        clone_or_fetch(url, dest, token=self.cfg.github_token)
+
     def _analysis_tick(self) -> None:
-        token = self.cfg.github_token
-
-        def sync(url: str, dest: Path) -> None:
-            clone_or_fetch(url, dest, token=token)
-
         processed = 0
         with self._open_conn() as conn:
             while True:
                 result = analysis.run_one_job(
-                    conn, self.cfg.repos_dir, sync=sync,
+                    conn, self.cfg.repos_dir, sync=self._git_sync,
                 )
                 if result is None:
                     break
@@ -100,6 +101,20 @@ class Scheduler:
         log.debug("discover tick: starting (token=%s)",
                   "set" if token else "absent")
         with self._open_conn() as conn:
+            # Refresh root_refs + root_commits before everything else so
+            # the per-exercise "first author" and the leaderboard's
+            # root-commit exclusion always see fresh data. Without this,
+            # any starter commits the instructor pushes to the root after
+            # initial setup would be attributed to participants.
+            if repos.get_root_repo(conn) is not None:
+                try:
+                    exercises.refresh_root(
+                        conn, self.cfg.repos_dir, sync=self._git_sync,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("root refresh failed: %s", exc)
+                else:
+                    log.debug("root refresh: ok")
             if token:
                 gh = GitHubClient(token)
                 try:
