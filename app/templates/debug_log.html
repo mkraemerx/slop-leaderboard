@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<h1>Log tail</h1>
+<p><a href="/debug/jobs">← back to debug</a> &middot; showing last {{ lines|length }} line(s) of <code>{{ log_path }}</code>.</p>
+{% if lines %}
+  <pre class="traceback">{% for line in lines %}{{ line }}{% endfor %}</pre>
+{% else %}
+  <p class="empty">No log lines yet.</p>
+{% endif %}
+{% endblock %}

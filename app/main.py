@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sqlite3
+import sys
+from pathlib import Path
 from typing import Callable
 
 from fastapi import FastAPI
@@ -12,25 +15,60 @@ from . import auth, db, scheduler as _scheduler, web, webhooks
 from .config import Config, load_config
 
 
-def _configure_logging() -> None:
-    """Route the app's loggers to stdout once, so analysis failures and
-    scheduler ticks show up in the uvicorn console. Idempotent — calling
-    again is a no-op (uvicorn imports app.main repeatedly under --reload).
+# Names of every logger our app emits to. We configure these directly (not
+# the root) so uvicorn's `logging.config.dictConfig` on startup — which
+# replaces root handlers — can't take our logs out.
+APP_LOGGERS = ("analysis", "scheduler", "webhooks", "auth")
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _configure_logging(cfg: Config) -> Path:
+    """Attach a StreamHandler (stderr) AND a rotating FileHandler to each
+    of our app loggers. Idempotent; safe under uvicorn --reload.
+
+    Returns the log file path so the operator knows where to tail.
+
+    Why both:
+    - StreamHandler: visible when uvicorn's logging doesn't eat it.
+    - FileHandler: survives anything uvicorn does to the console.
+
+    Why on named loggers (not root): uvicorn replaces the root logger's
+    handlers during startup. Attaching to named loggers with
+    `propagate = False` makes our output immune to that.
     """
-    root = logging.getLogger()
-    if any(getattr(h, "_slop_default", False) for h in root.handlers):
-        return
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    ))
-    handler._slop_default = True  # type: ignore[attr-defined]
-    # We add to the root logger so uvicorn's own logging still flows; we
-    # only raise our app loggers to INFO.
-    root.addHandler(handler)
-    for name in ("analysis", "scheduler"):
-        logging.getLogger(name).setLevel(logging.INFO)
+    log_dir = cfg.data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "app.log"
+
+    formatter = logging.Formatter(_LOG_FORMAT)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+    file_handler._slop = True  # type: ignore[attr-defined]
+
+    stream_handler = logging.StreamHandler(stream=sys.stderr)
+    stream_handler.setFormatter(formatter)
+    stream_handler._slop = True  # type: ignore[attr-defined]
+
+    for name in APP_LOGGERS:
+        logger = logging.getLogger(name)
+        # Idempotent: replace any prior _slop handlers (e.g. --reload
+        # re-imports the module).
+        for h in list(logger.handlers):
+            if getattr(h, "_slop", False):
+                logger.removeHandler(h)
+        logger.setLevel(logging.INFO)
+        logger.addHandler(file_handler)
+        logger.addHandler(stream_handler)
+        # propagate=False so messages don't ALSO hit root (which uvicorn
+        # owns); we don't want duplicate or swallowed lines.
+        logger.propagate = False
+
+    # Announce the file path on stderr so the operator can find it.
+    logging.getLogger("scheduler").info("logging to %s", log_file)
+    return log_file
 
 
 def create_app(
@@ -47,9 +85,10 @@ def create_app(
     test process. Production passes none of these.
     """
     cfg = config or load_config()
-    _configure_logging()
+    log_path = _configure_logging(cfg)
     app = FastAPI(title="slop-leaderboard")
     app.state.config = cfg
+    app.state.log_path = log_path
 
     if connection_factory is None:
         def connection_factory():

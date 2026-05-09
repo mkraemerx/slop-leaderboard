@@ -148,11 +148,27 @@ def fork_sync_now(request: Request, fork_id: int):
 
 @router.get("/debug/jobs", response_class=HTMLResponse)
 def debug_jobs_page(request: Request):
-    """Last 100 failed analysis jobs with full tracebacks."""
+    """Last 100 failed analysis jobs + log file location."""
     ctx = _common(request) | {
         "jobs": jobs.recent_failed_jobs(request.app.state.db, limit=100),
+        "log_path": getattr(request.app.state, "log_path", None),
     }
     return templates.TemplateResponse(request, "debug_jobs.html", ctx)
+
+
+@router.get("/debug/log", response_class=HTMLResponse)
+def debug_log_page(request: Request, n: int = 200):
+    """Tail the last `n` lines of the app log."""
+    log_path: Path | None = getattr(request.app.state, "log_path", None)
+    lines: list[str] = []
+    if log_path and Path(log_path).exists():
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-max(1, n):]
+    ctx = _common(request) | {
+        "lines": lines,
+        "log_path": log_path,
+    }
+    return templates.TemplateResponse(request, "debug_log.html", ctx)
 
 
 def mount_static(app):

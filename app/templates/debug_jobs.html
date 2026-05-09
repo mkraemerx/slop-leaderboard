@@ -1,7 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Failed jobs (debug){% endblock %}
+{% block title %}Debug{% endblock %}
 {% block content %}
-<h1>Failed analysis jobs</h1>
+<h1>Debug</h1>
+
+<section>
+  <h2>Log file</h2>
+  {% if log_path %}
+    <p>Logs are written to <code>{{ log_path }}</code>.</p>
+    <p>
+      Tail in your terminal: <code>tail -f {{ log_path }}</code>
+      &middot; or open <a href="/debug/log">/debug/log</a> for the last 200 lines.
+    </p>
+  {% else %}
+    <p class="empty">Log path not configured.</p>
+  {% endif %}
+</section>
+
+<h2>Failed analysis jobs</h2>
 <p>Most recent {{ jobs|length }} failure(s). The full traceback for each is shown below.</p>
 
 {% if jobs %}
