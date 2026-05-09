@@ -27,6 +27,7 @@ def _cfg(tmp_path: Path, *, root_url: str | None = None,
         github_org=None,
         secret_key="x" * 32, sync_interval_minutes=60,
         github_webhook_secret=None,
+        log_level="INFO",
     )
 
 
