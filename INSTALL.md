@@ -85,10 +85,32 @@ cp .env.example .env
 # → fill in GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_TOKEN, SECRET_KEY
 
 # Run the dev server
-uv run uvicorn app.main:app --reload --port 8000
+uv run --env-file .env uvicorn app.main:app \
+    --reload --reload-dir app --reload-delay 2 \
+    --port 8000
 ```
 
 The callback URL in your OAuth App must be set to `http://localhost:8000/auth/callback`.
+
+### Reload flags explained
+
+- `--reload-dir app` — watch only the `app/` package. Changes under
+  `tests/`, `scripts/`, `data/`, or `docs/` do **not** trigger a
+  restart. This keeps the server stable while someone edits code or
+  switches git branches in adjacent directories.
+- `--reload-delay 2` — debounce: wait two seconds after the last file
+  change before restarting. A `git checkout` that touches many files in
+  quick succession then causes a single reload instead of a cascade.
+
+If you'd like an even more stable dev setup (so a parallel git branch
+switch never touches the server's working tree at all), run the server
+from a git worktree:
+
+```bash
+git worktree add ../slop-leaderboard-dev <branch-to-work-on>
+# Server stays in slop-leaderboard/ on whatever branch you've picked.
+# Do all your editing in slop-leaderboard-dev/.
+```
 
 ---
 
