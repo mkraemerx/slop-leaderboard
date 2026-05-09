@@ -133,3 +133,49 @@ def jobs_for_fork(conn: sqlite3.Connection, fork_id: int) -> list[Job]:
     ).fetchall()
     return [Job(id=r["id"], fork_id=r["fork_id"], kind=r["kind"],
                 status=r["status"], error=r["error"]) for r in rows]
+
+
+@dataclass(frozen=True)
+class FailedJobRow:
+    """A failed analysis job joined with its fork's identity (for /debug/jobs)."""
+    job_id: int
+    fork_id: int
+    fork_owner: str
+    fork_name: str
+    fork_url: str
+    kind: str
+    error: str
+    started_at: str | None
+    finished_at: str | None
+
+
+def recent_failed_jobs(conn: sqlite3.Connection, limit: int = 100,
+                        ) -> list[FailedJobRow]:
+    """Most recent `limit` failed jobs joined with fork identity.
+
+    Used by the /debug/jobs page so the operator can see full tracebacks
+    without scraping the uvicorn console.
+    """
+    rows = conn.execute(
+        """
+        SELECT j.id AS job_id, j.fork_id, j.kind, j.error,
+               j.started_at, j.finished_at,
+               f.owner AS fork_owner, f.name AS fork_name, f.url AS fork_url
+        FROM analysis_jobs j
+        JOIN forks f ON f.id = j.fork_id
+        WHERE j.status = 'failed'
+        ORDER BY j.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [
+        FailedJobRow(
+            job_id=r["job_id"], fork_id=r["fork_id"],
+            fork_owner=r["fork_owner"], fork_name=r["fork_name"],
+            fork_url=r["fork_url"], kind=r["kind"],
+            error=r["error"] or "",
+            started_at=r["started_at"], finished_at=r["finished_at"],
+        )
+        for r in rows
+    ]

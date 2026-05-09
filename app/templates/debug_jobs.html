@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Failed jobs (debug){% endblock %}
+{% block content %}
+<h1>Failed analysis jobs</h1>
+<p>Most recent {{ jobs|length }} failure(s). The full traceback for each is shown below.</p>
+
+{% if jobs %}
+  {% for j in jobs %}
+    <details class="failed-job" {% if loop.first %}open{% endif %}>
+      <summary>
+        <strong>{{ j.fork_owner }}/{{ j.fork_name }}</strong>
+        — job #{{ j.job_id }} ({{ j.kind }})
+        <span class="muted">· finished {{ j.finished_at or "—" }}</span>
+      </summary>
+      <p>
+        <a href="{{ j.fork_url }}" target="_blank" rel="noopener">{{ j.fork_url }}</a>
+        · started {{ j.started_at or "—" }}
+      </p>
+      <pre class="traceback">{{ j.error }}</pre>
+    </details>
+  {% endfor %}
+{% else %}
+  <p class="empty">No failed jobs.</p>
+{% endif %}
+{% endblock %}

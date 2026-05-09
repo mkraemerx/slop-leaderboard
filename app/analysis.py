@@ -6,7 +6,9 @@ APScheduler thread (ASSUMPTION-007).
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
+import traceback
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +20,9 @@ from .git_ops import (
 )
 from .repos import update_sync_status
 from .storage import repo_path
+
+
+log = logging.getLogger("analysis")
 
 
 # Type alias for the git callable so tests can swap in a fake.
@@ -154,9 +159,14 @@ def run_one_job(
         analyze_fork(conn, job.fork_id, base_repos_dir,
                      sync=sync, iter_commits=iter_commits)
     except Exception as exc:  # noqa: BLE001 — surface any failure as error
-        msg = f"{type(exc).__name__}: {exc}"
-        update_sync_status(conn, job.fork_id, "error", error=msg)
-        jobs.mark_failed(conn, job.id, msg)
+        short = f"{type(exc).__name__}: {exc}"
+        full = f"{short}\n\n{traceback.format_exc()}"
+        # Short message on the fork row (tooltip on /forks); full traceback
+        # on the job row (rendered on /debug/jobs).
+        update_sync_status(conn, job.fork_id, "error", error=short)
+        jobs.mark_failed(conn, job.id, full)
+        log.error("analysis failed for fork %d: %s", job.fork_id, short,
+                  exc_info=exc)
         return jobs.get_job(conn, job.id)
     update_sync_status(conn, job.fork_id, "ok", mark_analysed=True)
     jobs.mark_done(conn, job.id)

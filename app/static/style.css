@@ -30,3 +30,15 @@ tbody tr:hover { background: #fafbff; }
 .add-fork { margin: 1em 0; }
 .badge { font-size: 0.75em; background: #eef; padding: 0.1em 0.5em;
          border-radius: 0.5em; color: #335; }
+
+.nav-debug { color: var(--muted) !important; }
+.error { color: var(--err); cursor: help; }
+.failed-job { margin: 0.75em 0; padding: 0.5em 0.75em;
+              background: white; border: 1px solid var(--border);
+              border-radius: 0.25em; }
+.failed-job summary { cursor: pointer; }
+.failed-job .muted { color: var(--muted); font-size: 0.9em; }
+.traceback { background: #1e1e1e; color: #f0f0f0;
+             padding: 0.75em; border-radius: 0.25em;
+             overflow-x: auto; font-size: 0.85em; line-height: 1.4;
+             white-space: pre-wrap; word-break: break-word; }
