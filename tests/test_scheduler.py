@@ -130,11 +130,23 @@ def test_analysis_tick_passes_token_to_clone(tmp_path: Path):
 
 # --- Scheduler discover tick ----------------------------------------------
 
-def test_discover_tick_noop_without_token(tmp_path: Path):
+def test_discover_tick_without_token_still_enqueues_resync(tmp_path: Path):
+    """Without a token we skip API discovery but still resync existing forks
+    so errored forks get retried."""
     cfg = _cfg(tmp_path, token=None)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    fork = add_fork_manual(conn, "https://github.com/alice/root")
+    # Drain the auto-enqueued 'full' job so the fork has no pending work.
+    j = jobs.claim_next(conn); jobs.mark_failed(conn, j.id, "earlier failure")
+
     sched = scheduler.Scheduler(cfg)
-    # Should return cleanly without doing anything.
     sched._discover_tick()
+
+    queue = [j for j in jobs.jobs_for_fork(conn, fork.id) if j.status == "queued"]
+    assert len(queue) == 1
+    assert queue[0].kind == "sync"
 
 
 def test_discover_tick_calls_discover_forks_with_token(tmp_path: Path):
@@ -162,6 +174,91 @@ def test_discover_tick_swallows_github_errors(tmp_path: Path):
                side_effect=GitHubError("rate limited")):
         # Must not raise
         sched._discover_tick()
+
+
+# --- periodic resync ------------------------------------------------------
+
+def test_resync_enqueues_sync_for_errored_fork(tmp_path: Path):
+    """A fork whose last job failed gets a new 'sync' job on the next tick."""
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    fork = add_fork_manual(conn, "https://github.com/alice/root")
+    j = jobs.claim_next(conn); jobs.mark_failed(conn, j.id, "boom")
+
+    sched = scheduler.Scheduler(cfg)
+    enqueued = sched._enqueue_periodic_resync(conn)
+
+    assert enqueued == 1
+    new_queued = [j for j in jobs.jobs_for_fork(conn, fork.id) if j.status == "queued"]
+    assert len(new_queued) == 1
+    assert new_queued[0].kind == "sync"
+
+
+def test_resync_skips_fork_with_already_queued_work(tmp_path: Path):
+    """A fork that still has a queued job is left alone — no duplicates."""
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    fork = add_fork_manual(conn, "https://github.com/alice/root")
+    # The auto-enqueued 'full' job is already queued.
+
+    sched = scheduler.Scheduler(cfg)
+    enqueued = sched._enqueue_periodic_resync(conn)
+
+    assert enqueued == 0
+    queued = [j for j in jobs.jobs_for_fork(conn, fork.id) if j.status == "queued"]
+    assert len(queued) == 1  # still just the original
+
+
+def test_resync_skips_fork_with_running_job(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    fork = add_fork_manual(conn, "https://github.com/alice/root")
+    jobs.claim_next(conn)  # transitions the auto-enqueued job to running
+
+    sched = scheduler.Scheduler(cfg)
+    enqueued = sched._enqueue_periodic_resync(conn)
+    assert enqueued == 0
+
+
+def test_resync_enqueues_after_successful_completion(tmp_path: Path):
+    """A fork whose last job finished successfully also gets resynced
+    periodically — keeps the leaderboard fresh."""
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    fork = add_fork_manual(conn, "https://github.com/alice/root")
+    j = jobs.claim_next(conn); jobs.mark_done(conn, j.id)
+
+    sched = scheduler.Scheduler(cfg)
+    enqueued = sched._enqueue_periodic_resync(conn)
+
+    assert enqueued == 1
+
+
+def test_resync_handles_multiple_forks(tmp_path: Path):
+    cfg = _cfg(tmp_path)
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+    f1 = add_fork_manual(conn, "https://github.com/alice/root")
+    f2 = add_fork_manual(conn, "https://github.com/bob/root")
+    f3 = add_fork_manual(conn, "https://github.com/charlie/root")
+
+    # Drain initial jobs with mixed outcomes.
+    jobs.mark_done(conn, jobs.claim_next(conn).id)
+    jobs.mark_failed(conn, jobs.claim_next(conn).id, "x")
+    jobs.mark_done(conn, jobs.claim_next(conn).id)
+
+    sched = scheduler.Scheduler(cfg)
+    enqueued = sched._enqueue_periodic_resync(conn)
+    assert enqueued == 3
 
 
 # --- start / shutdown lifecycle -------------------------------------------
