@@ -57,7 +57,7 @@ GITHUB_ORG=your-org-name
 # Platform API token — used for fork discovery (needs repo + read:org scopes)
 GITHUB_TOKEN=ghp_...
 
-# Session signing key — generate with: python -c "import secrets; print(secrets.token_hex(32))"
+# Session signing key — generate with: uv run python -c "import secrets; print(secrets.token_hex(32))"
 SECRET_KEY=replace_with_a_strong_random_value
 ```
 
