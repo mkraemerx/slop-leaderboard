@@ -1,5 +1,5 @@
 """Tests for the runtime wiring: root-repo seeding, scheduler ticks,
-and tokenised git URL rewriting."""
+and the pygit2 credentials callback."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,7 +10,7 @@ import pytest
 from app import jobs, scheduler
 from app.config import Config
 from app.db import connect, init_schema
-from app.git_ops import _with_token
+from app.git_ops import _token_callbacks
 from app.repos import add_fork_manual, get_root_repo, set_root_repo
 
 
@@ -57,30 +57,29 @@ def test_seed_root_does_nothing_when_env_unset(db, tmp_path: Path):
     assert get_root_repo(db) is None
 
 
-# --- _with_token URL rewriting --------------------------------------------
+# --- credentials callback -------------------------------------------------
 
-def test_with_token_injects_creds_on_github_https():
-    out = _with_token("https://github.com/acme/root", "ghp_xyz")
-    assert out == "https://x-access-token:ghp_xyz@github.com/acme/root"
-
-
-def test_with_token_passthrough_when_no_token():
-    assert _with_token("https://github.com/acme/root", None) == \
-        "https://github.com/acme/root"
-    assert _with_token("https://github.com/acme/root", "") == \
-        "https://github.com/acme/root"
+def test_token_callbacks_returns_none_when_no_token():
+    """No token → no callback object; libgit2 will treat the fetch as
+    anonymous (which is right for public repos)."""
+    assert _token_callbacks(None) is None
+    assert _token_callbacks("") is None
 
 
-def test_with_token_skips_non_github_hosts():
-    """We don't want to leak a GitHub token to other hosts."""
-    out = _with_token("https://gitlab.com/acme/root", "ghp_xyz")
-    assert "x-access-token" not in out
-    assert out == "https://gitlab.com/acme/root"
-
-
-def test_with_token_skips_ssh_urls():
-    out = _with_token("git@github.com:acme/root.git", "ghp_xyz")
-    assert "ghp_xyz" not in out
+def test_token_callbacks_supplies_userpass_when_token_set():
+    """The credentials() hook returns a pygit2 UserPass with
+    `x-access-token` as the username — the documented GitHub form for
+    PATs and OAuth tokens used as git basic auth."""
+    import pygit2
+    cb = _token_callbacks("ghp_xyz")
+    assert cb is not None
+    cred = cb.credentials(
+        "https://github.com/acme/root", None,
+        pygit2.CredentialType.USERPASS_PLAINTEXT,
+    )
+    assert isinstance(cred, pygit2.UserPass)
+    # UserPass exposes its tuple via .credential_tuple
+    assert cred.credential_tuple == ("x-access-token", "ghp_xyz")
 
 
 # --- Scheduler analysis tick ----------------------------------------------
