@@ -20,7 +20,7 @@
         <td>{{ ex.first_author_name or "—" }}</td>
         <td>{{ ex.first_commit_time or "—" }}</td>
         <td>
-          <a href="/exercises/{{ ex.ref_type }}/{{ ex.name }}/comparison">Compare</a>
+          <a href="/exercises/{{ ex.ref_type }}/compare/{{ ex.name }}">Compare</a>
         </td>
       </tr>
     {% endfor %}

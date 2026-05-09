@@ -88,8 +88,26 @@ def test_comparison_page_accessible_per_exercise(tmp_path):
     with TestClient(app) as client:
         _login(client)
         # The link target must render even if the exercise has no forks.
-        resp = client.get("/exercises/branch/exercise-01/comparison")
+        resp = client.get("/exercises/branch/compare/exercise-01")
         assert resp.status_code == 200
+
+
+def test_comparison_page_handles_branch_name_with_slash(tmp_path):
+    """Git branch names like `feature/day2` contain a slash; the URL must
+    match anyway (uses the :path converter)."""
+    app = _build_app(tmp_path)
+    with TestClient(app) as client:
+        _login(client)
+        resp = client.get("/exercises/branch/compare/feature/day2")
+        assert resp.status_code == 200, resp.text
+
+
+def test_comparison_page_handles_deeply_nested_branch_name(tmp_path):
+    app = _build_app(tmp_path)
+    with TestClient(app) as client:
+        _login(client)
+        resp = client.get("/exercises/branch/compare/team/alice/wip/foo")
+        assert resp.status_code == 200, resp.text
 
 
 # AC2: filter changes update only the relevant section (HTMX partial)
