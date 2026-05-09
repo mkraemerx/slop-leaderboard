@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Author aliases{% endblock %}
+{% block content %}
+<h1>Author identities</h1>
+<p>
+  Git author identity is unreliable: the same person commits with multiple
+  emails, and automation accounts (CI bots, AI assistants) pollute the
+  leaderboard. Use this page to consolidate identities and hide bots.
+</p>
+
+<section>
+  <h2>Aliases ({{ aliases|length }})</h2>
+  <p>An alias maps a "raw" commit email to a canonical email so they're
+     counted as the same person.</p>
+
+  <form method="post" action="/admin/aliases/add" class="admin-form">
+    <label>Alias (commit email):
+      <input type="email" name="alias_email" required placeholder="alice@personal.com">
+    </label>
+    <label>Canonical (real person):
+      <input type="email" name="canonical_email" required placeholder="alice@work.com">
+    </label>
+    <label>Display name (optional):
+      <input type="text" name="display_name" placeholder="Alice Smith">
+    </label>
+    <button type="submit">Add alias</button>
+  </form>
+
+  {% if aliases %}
+  <table class="aliases">
+    <thead>
+      <tr><th>Alias</th><th>→ Canonical</th><th>Display name</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for a in aliases %}
+        <tr>
+          <td>{{ a.alias_email }}</td>
+          <td>{{ a.canonical_email }}</td>
+          <td>{{ a.display_name or "—" }}</td>
+          <td>
+            <form method="post" action="/admin/aliases/delete" class="inline">
+              <input type="hidden" name="alias_email" value="{{ a.alias_email }}">
+              <button type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Ignored authors ({{ ignored|length }})</h2>
+  <p>Ignored emails (and any aliases pointing to them) are dropped from
+     every aggregation. Good for bots and automation accounts.</p>
+
+  <form method="post" action="/admin/aliases/ignore" class="admin-form">
+    <label>Email to ignore:
+      <input type="email" name="email" required placeholder="bot@example.com">
+    </label>
+    <button type="submit">Ignore</button>
+  </form>
+
+  {% if ignored %}
+  <table class="ignored">
+    <thead><tr><th>Email</th><th></th></tr></thead>
+    <tbody>
+      {% for email in ignored %}
+        <tr>
+          <td>{{ email }}</td>
+          <td>
+            <form method="post" action="/admin/aliases/unignore" class="inline">
+              <input type="hidden" name="email" value="{{ email }}">
+              <button type="submit">Un-ignore</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Seen in commits ({{ emails|length }})</h2>
+  <p>Distinct author emails extracted from the commit history (dedup'd by
+     SHA), with their commit counts. Use this as a worklist to spot
+     duplicates and bots.</p>
+  <table class="emails">
+    <thead>
+      <tr><th>Email</th><th>Name (sample)</th><th>Commits</th></tr>
+    </thead>
+    <tbody>
+      {% for e in emails %}
+        <tr>
+          <td>{{ e.email }}</td>
+          <td>{{ e.name_sample }}</td>
+          <td>{{ e.commits }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

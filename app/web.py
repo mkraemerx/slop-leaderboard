@@ -14,7 +14,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from . import auth, comparison, exercises as exercises_mod, jobs, leaderboard, repos
+from . import (
+    aliases as aliases_mod,
+    auth, comparison,
+    exercises as exercises_mod,
+    jobs, leaderboard, repos,
+)
 
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -152,6 +157,52 @@ def fork_sync_now(request: Request, fork_id: int):
             {"forks": repos.list_forks(conn)},
         )
     return RedirectResponse("/forks", status_code=303)
+
+
+@router.get("/admin/aliases", response_class=HTMLResponse)
+def admin_aliases_page(request: Request):
+    """Manage author identity normalisation: aliases + ignored authors."""
+    conn = request.app.state.db
+    ctx = _common(request) | {
+        "aliases": aliases_mod.list_aliases(conn),
+        "ignored": aliases_mod.list_ignored(conn),
+        "emails": aliases_mod.distinct_commit_emails(conn),
+    }
+    return templates.TemplateResponse(request, "admin_aliases.html", ctx)
+
+
+@router.post("/admin/aliases/add")
+def admin_aliases_add(request: Request,
+                       alias_email: str = Form(...),
+                       canonical_email: str = Form(...),
+                       display_name: str = Form("")):
+    try:
+        aliases_mod.add_alias(request.app.state.db, alias_email,
+                              canonical_email, display_name or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return RedirectResponse("/admin/aliases", status_code=303)
+
+
+@router.post("/admin/aliases/delete")
+def admin_aliases_delete(request: Request, alias_email: str = Form(...)):
+    aliases_mod.remove_alias(request.app.state.db, alias_email)
+    return RedirectResponse("/admin/aliases", status_code=303)
+
+
+@router.post("/admin/aliases/ignore")
+def admin_aliases_ignore(request: Request, email: str = Form(...)):
+    try:
+        aliases_mod.ignore_author(request.app.state.db, email)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return RedirectResponse("/admin/aliases", status_code=303)
+
+
+@router.post("/admin/aliases/unignore")
+def admin_aliases_unignore(request: Request, email: str = Form(...)):
+    aliases_mod.unignore_author(request.app.state.db, email)
+    return RedirectResponse("/admin/aliases", status_code=303)
 
 
 @router.get("/debug/jobs", response_class=HTMLResponse)
