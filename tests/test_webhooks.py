@@ -36,7 +36,8 @@ def _app_with_fork(tmp_path, *, webhook_secret: str | None):
         c = dbmod.connect(cfg.db_path, check_same_thread=False)
         dbmod.init_schema(c)
         return c
-    app = create_app(config=cfg, oauth=FakeOAuth(), connection_factory=_factory)
+    app = create_app(config=cfg, oauth=FakeOAuth(),
+                     connection_factory=_factory, start_scheduler=False)
     set_root_repo(app.state.db, "https://github.com/acme/root")
     add_fork_manual(app.state.db, "https://github.com/alice/root")
     # Drain the auto-enqueued analysis job so post-webhook job count is

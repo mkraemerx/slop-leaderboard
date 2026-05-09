@@ -46,28 +46,62 @@ _MIRROR_REFSPECS = [
 ]
 
 
-def clone_or_fetch(url: str, dest: Path) -> None:
+def clone_or_fetch(url: str, dest: Path, *, token: str | None = None) -> None:
     """Clone `url` to `dest` as a bare mirror, or fetch into an existing
     clone. We use bare clones + explicit mirror refspecs so every branch and
     tag becomes a local ref — FR-03/FR-04 walk those directly.
+
+    If `token` is provided, GitHub HTTPS auth is injected via the URL. The
+    token never lands on disk (the remote URL stored in .git/config keeps
+    the un-authenticated form).
     """
     import pygit2
+
+    auth_url = _with_token(url, token)
 
     if dest.exists() and _is_repo(dest):
         repo = pygit2.Repository(str(dest))
         remote = next((r for r in repo.remotes if r.name == "origin"), None)
         if remote is None:
             remote = repo.remotes.create("origin", url)
-        remote.fetch(refspecs=_MIRROR_REFSPECS,
-                     callbacks=None, prune=pygit2.GIT_FETCH_PRUNE)
+        # Use the authenticated URL for the fetch attempt by overriding
+        # the remote URL just for this call.
+        if token:
+            repo.remotes.set_url("origin", auth_url)
+        try:
+            remote = repo.remotes["origin"]
+            remote.fetch(refspecs=_MIRROR_REFSPECS,
+                         callbacks=None, prune=pygit2.GIT_FETCH_PRUNE)
+        finally:
+            if token:
+                repo.remotes.set_url("origin", url)
         return
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    pygit2.clone_repository(url, str(dest), bare=True)
+    pygit2.clone_repository(auth_url, str(dest), bare=True)
     repo = pygit2.Repository(str(dest))
+    # Strip the token from the stored remote URL so .git/config never
+    # contains the secret.
+    if token:
+        repo.remotes.set_url("origin", url)
     repo.remotes["origin"].fetch(refspecs=_MIRROR_REFSPECS,
                                  callbacks=None,
                                  prune=pygit2.GIT_FETCH_PRUNE)
+
+
+def _with_token(url: str, token: str | None) -> str:
+    """Inject a GitHub OAuth/PAT token into an HTTPS URL for git auth.
+
+    Only github.com HTTPS URLs are rewritten; everything else passes
+    through unchanged.
+    """
+    if not token:
+        return url
+    if not url.startswith("https://github.com/"):
+        return url
+    # GitHub accepts either `<token>@` or `x-access-token:<token>@` —
+    # the latter is the documented form for installation tokens.
+    return url.replace("https://", f"https://x-access-token:{token}@", 1)
 
 
 def _is_repo(path: Path) -> bool:
