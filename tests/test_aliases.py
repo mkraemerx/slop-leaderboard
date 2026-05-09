@@ -201,6 +201,33 @@ def test_admin_can_add_alias_via_form(tmp_path: Path):
     assert rows[0].alias_email == "a@x"
 
 
+def test_admin_accepts_non_rfc_email_shapes_that_git_emits(tmp_path: Path):
+    """Git accepts any string as author_email — including GitHub's
+    noreply `<id>+<username>@users.noreply.github.com` form which
+    contains square brackets for bot accounts. The admin form must
+    not reject these (HTML5 type=email would)."""
+    app = _build_app(tmp_path)
+    bot = "41898282+claude[bot]@users.noreply.github.com"
+    with TestClient(app, follow_redirects=False) as client:
+        _login(client)
+
+        # 1. Can be ignored
+        resp = client.post("/admin/aliases/ignore", data={"email": bot})
+        assert resp.status_code == 303
+        assert bot in aliases.list_ignored(app.state.db)
+
+        # 2. Can be the alias side of a mapping
+        resp = client.post(
+            "/admin/aliases/add",
+            data={"alias_email": bot, "canonical_email": "claude@anthropic.com"},
+        )
+        assert resp.status_code == 303
+
+        # 3. The admin page renders both back
+        body = client.get("/admin/aliases").text
+        assert bot in body
+
+
 def test_admin_can_delete_alias_via_form(tmp_path: Path):
     app = _build_app(tmp_path)
     aliases.add_alias(app.state.db, "a@x", "a@y")
