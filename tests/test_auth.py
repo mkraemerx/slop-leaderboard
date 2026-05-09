@@ -60,7 +60,8 @@ def make_app(cfg: Config, fake_oauth: FakeOAuth):
         conn = dbmod.connect(cfg.db_path, check_same_thread=False)
         dbmod.init_schema(conn)
         return conn
-    return create_app(config=cfg, oauth=fake_oauth, connection_factory=_factory)
+    return create_app(config=cfg, oauth=fake_oauth,
+                      connection_factory=_factory, start_scheduler=False)
 
 
 def test_unauthenticated_user_redirected_to_login(cfg):

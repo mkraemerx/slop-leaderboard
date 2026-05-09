@@ -37,7 +37,8 @@ def _build_app(tmp_path, *, with_root: bool = True):
         user_login="alice",
         org_membership={("acme", "alice"): True},
     )
-    app = create_app(config=cfg, oauth=fake, connection_factory=_factory)
+    app = create_app(config=cfg, oauth=fake,
+                     connection_factory=_factory, start_scheduler=False)
     if with_root:
         set_root_repo(app.state.db, "https://github.com/acme/root")
     return app
