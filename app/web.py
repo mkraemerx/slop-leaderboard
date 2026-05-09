@@ -87,8 +87,16 @@ def exercises_page(request: Request):
     return templates.TemplateResponse(request, "exercises.html", ctx)
 
 
-@router.get("/exercises/{ref_type}/{name}/comparison", response_class=HTMLResponse)
+@router.get("/exercises/{ref_type}/compare/{name:path}",
+             response_class=HTMLResponse)
 def comparison_page(request: Request, ref_type: str, name: str):
+    """Compare participant solutions for one exercise.
+
+    The `name` parameter uses the `:path` converter so branch names with
+    slashes (e.g. `feature/day2`, `bugfix/login`) match this route. The
+    literal segment `compare/` is placed before `name` so the converter
+    isn't greedy across additional URL parts.
+    """
     if ref_type not in ("branch", "tag"):
         raise HTTPException(404, "unknown ref type")
     base_dir = request.app.state.config.repos_dir
