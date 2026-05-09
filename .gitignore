@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project: persistent data dir (SQLite + cloned repos)
+/data/

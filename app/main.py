@@ -1,6 +1,7 @@
 """FastAPI app factory."""
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Callable
 
@@ -9,6 +10,27 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, db, scheduler as _scheduler, web, webhooks
 from .config import Config, load_config
+
+
+def _configure_logging() -> None:
+    """Route the app's loggers to stdout once, so analysis failures and
+    scheduler ticks show up in the uvicorn console. Idempotent — calling
+    again is a no-op (uvicorn imports app.main repeatedly under --reload).
+    """
+    root = logging.getLogger()
+    if any(getattr(h, "_slop_default", False) for h in root.handlers):
+        return
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    ))
+    handler._slop_default = True  # type: ignore[attr-defined]
+    # We add to the root logger so uvicorn's own logging still flows; we
+    # only raise our app loggers to INFO.
+    root.addHandler(handler)
+    for name in ("analysis", "scheduler"):
+        logging.getLogger(name).setLevel(logging.INFO)
 
 
 def create_app(
@@ -25,6 +47,7 @@ def create_app(
     test process. Production passes none of these.
     """
     cfg = config or load_config()
+    _configure_logging()
     app = FastAPI(title="slop-leaderboard")
     app.state.config = cfg
 

@@ -146,6 +146,15 @@ def fork_sync_now(request: Request, fork_id: int):
     return RedirectResponse("/forks", status_code=303)
 
 
+@router.get("/debug/jobs", response_class=HTMLResponse)
+def debug_jobs_page(request: Request):
+    """Last 100 failed analysis jobs with full tracebacks."""
+    ctx = _common(request) | {
+        "jobs": jobs.recent_failed_jobs(request.app.state.db, limit=100),
+    }
+    return templates.TemplateResponse(request, "debug_jobs.html", ctx)
+
+
 def mount_static(app):
     """Mount /static/* — kept as a function so app/main.py can choose to
     skip it in tests that don't care about css."""
