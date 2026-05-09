@@ -84,16 +84,21 @@ class Scheduler:
         def sync(url: str, dest: Path) -> None:
             clone_or_fetch(url, dest, token=token)
 
+        processed = 0
         with self._open_conn() as conn:
             while True:
                 result = analysis.run_one_job(
                     conn, self.cfg.repos_dir, sync=sync,
                 )
                 if result is None:
-                    return
+                    break
+                processed += 1
+        log.debug("analysis tick: processed %d job(s)", processed)
 
     def _discover_tick(self) -> None:
         token = self.cfg.github_token
+        log.debug("discover tick: starting (token=%s)",
+                  "set" if token else "absent")
         with self._open_conn() as conn:
             if token:
                 gh = GitHubClient(token)
@@ -102,9 +107,9 @@ class Scheduler:
                 except GitHubError as exc:
                     log.warning("fork discovery failed: %s", exc)
                 else:
-                    if added:
-                        log.info("discovered %d new fork(s)", len(added))
+                    log.debug("fork discovery: %d new fork(s)", len(added))
             self._enqueue_periodic_resync(conn)
+        log.debug("discover tick: done")
 
     def _enqueue_periodic_resync(self, conn: sqlite3.Connection) -> int:
         """For every fork that has no `queued` or `running` work in the
@@ -126,8 +131,7 @@ class Scheduler:
         ).fetchall()
         for r in rows:
             jobs.enqueue_analysis(conn, int(r["id"]), kind="sync")
-        if rows:
-            log.info("enqueued periodic resync for %d fork(s)", len(rows))
+        log.debug("periodic resync: enqueued %d fork(s)", len(rows))
         return len(rows)
 
     # --- helpers -----------------------------------------------------------

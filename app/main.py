@@ -52,6 +52,11 @@ def _configure_logging(cfg: Config) -> Path:
     stream_handler.setFormatter(formatter)
     stream_handler._slop = True  # type: ignore[attr-defined]
 
+    # LOG_LEVEL env var (default INFO) controls verbosity. Routine
+    # per-fork and per-tick lines are at DEBUG, so set LOG_LEVEL=DEBUG to
+    # see the full scheduler heartbeat; INFO keeps the file quiet, only
+    # surfacing meaningful events (startup, errors).
+    level = getattr(logging, cfg.log_level, logging.INFO)
     for name in APP_LOGGERS:
         logger = logging.getLogger(name)
         # Idempotent: replace any prior _slop handlers (e.g. --reload
@@ -59,7 +64,7 @@ def _configure_logging(cfg: Config) -> Path:
         for h in list(logger.handlers):
             if getattr(h, "_slop", False):
                 logger.removeHandler(h)
-        logger.setLevel(logging.INFO)
+        logger.setLevel(level)
         logger.addHandler(file_handler)
         logger.addHandler(stream_handler)
         # propagate=False so messages don't ALSO hit root (which uvicorn
@@ -67,7 +72,8 @@ def _configure_logging(cfg: Config) -> Path:
         logger.propagate = False
 
     # Announce the file path on stderr so the operator can find it.
-    logging.getLogger("scheduler").info("logging to %s", log_file)
+    logging.getLogger("scheduler").info("logging to %s (level=%s)",
+                                         log_file, cfg.log_level)
     return log_file
 
 

@@ -51,6 +51,7 @@ def cfg(tmp_path) -> Config:
         secret_key="x" * 32,
         sync_interval_minutes=60,
         github_webhook_secret=None,
+        log_level="INFO",
     )
 
 
@@ -210,6 +211,7 @@ def _make_no_org_cfg(tmp_path) -> Config:
         github_org=None,                     # <-- no org configured
         secret_key="x" * 32, sync_interval_minutes=60,
         github_webhook_secret=None,
+        log_level="INFO",
     )
 
 

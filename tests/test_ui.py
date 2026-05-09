@@ -24,6 +24,7 @@ def _cfg(tmp_path) -> Config:
         github_org="acme",
         secret_key="x" * 32, sync_interval_minutes=60,
         github_webhook_secret=None,
+        log_level="INFO",
     )
 
 

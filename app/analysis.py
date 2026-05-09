@@ -121,12 +121,16 @@ def analyze_fork(
     marking the fork's sync status accordingly (so existing data is left
     intact on failure — FR-02 AC3).
     """
+    import time
     row = conn.execute(
         "SELECT id, url, owner, name FROM forks WHERE id = ?", (fork_id,)
     ).fetchone()
     if row is None:
         raise ValueError(f"no such fork: {fork_id}")
 
+    label = f"{row['owner']}/{row['name']}"
+    log.debug("analyzing fork %d (%s)", fork_id, label)
+    started = time.monotonic()
     update_sync_status(conn, fork_id, "running")
 
     local = repo_path(base_repos_dir, row["owner"], row["name"])
@@ -138,6 +142,8 @@ def analyze_fork(
     # Refs are recomputed every sync so additions/deletions of branches/tags
     # are reflected (FR-03 + needed by FR-04).
     rebuild_commit_refs(conn, fork_id, local)
+    log.debug("analyzed fork %d (%s): +%d commit(s) in %.1fs",
+              fork_id, label, inserted, time.monotonic() - started)
     return inserted
 
 

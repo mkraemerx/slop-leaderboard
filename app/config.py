@@ -24,6 +24,8 @@ class Config:
 
     github_webhook_secret: str | None
 
+    log_level: str
+
 
 def load_config(env: dict[str, str] | None = None) -> Config:
     src = env if env is not None else os.environ
@@ -41,4 +43,5 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         secret_key=src.get("SECRET_KEY") or None,
         sync_interval_minutes=int(src.get("SYNC_INTERVAL_MINUTES", "60")),
         github_webhook_secret=src.get("GITHUB_WEBHOOK_SECRET") or None,
+        log_level=(src.get("LOG_LEVEL") or "INFO").upper(),
     )
