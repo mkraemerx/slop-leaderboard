@@ -2,7 +2,7 @@
 
 ## Context
 
-The primary use case is a training or course setting: an instructor provides a root repository, authors fork it and complete exercises in their forks. The dashboard tracks contribution activity across all forks and enables comparison of exercise solutions between authors.
+The primary use case is a training or course setting: an instructor provides a template repository, authors work in their own clone of it (all bundled in one organisation) and complete exercises there. The dashboard tracks contribution activity across all participant repositories and enables comparison of exercise solutions between authors.
 
 ---
 
@@ -10,7 +10,7 @@ The primary use case is a training or course setting: an instructor provides a r
 
 | ID | Title |
 |----|-------|
-| [FR-01](requirements/FR-01.md) | Root Repository & Fork Tracking |
+| [FR-01](requirements/FR-01.md) | Template & Participant Repository Tracking |
 | [FR-02](requirements/FR-02.md) | Git Analysis |
 | [FR-03](requirements/FR-03.md) | Commit Metrics |
 | [FR-04](requirements/FR-04.md) | Exercises |
@@ -34,7 +34,7 @@ The primary use case is a training or course setting: an instructor provides a r
 
 ## Out of Scope (v1)
 
-- Tracking more than one root repository simultaneously
+- Tracking more than one template repository simultaneously
 - Semantic code analysis (detecting algorithmically equivalent solutions)
 - Notifications (email, Slack, etc.)
 - Configurable scoring formula
