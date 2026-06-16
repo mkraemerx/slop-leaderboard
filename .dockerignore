@@ -1,0 +1,25 @@
+# VCS / tooling
+.git
+.gitignore
+.github
+
+# Local data & secrets — never bake into the image
+data
+.env
+*.sqlite3
+*.sqlite3-*
+
+# Python caches / local venv
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.python-version
+
+# Tests & docs aren't needed at runtime
+tests
+docs
+
+# Misc
+.DS_Store

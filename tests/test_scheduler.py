@@ -157,10 +157,32 @@ def test_discover_tick_calls_discover_forks_with_token(tmp_path: Path):
     set_root_repo(conn, "https://github.com/acme/root")
 
     sched = scheduler.Scheduler(cfg)
-    with patch("app.scheduler.repos.discover_forks") as mock_disc:
+    with patch("app.scheduler.exercises.refresh_root"), \
+         patch("app.scheduler.repos.template_root_shas", return_value={"abc"}), \
+         patch("app.scheduler.repos.discover_forks") as mock_disc:
         mock_disc.return_value = []
         sched._discover_tick()
     assert mock_disc.called
+    # The template's root SHAs are threaded through to the discovery filter.
+    args, kwargs = mock_disc.call_args
+    assert args[2] == {"abc"}
+    assert kwargs.get("exclude") == cfg.discovery_exclude
+
+
+def test_discover_tick_skips_discovery_when_template_root_unknown(tmp_path: Path):
+    """If the template hasn't been fetched yet we can't tell genuine clones
+    from unrelated org repos, so discovery is skipped rather than guessing."""
+    cfg = _cfg(tmp_path, token="ghp_xyz")
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    set_root_repo(conn, "https://github.com/acme/root")
+
+    sched = scheduler.Scheduler(cfg)
+    with patch("app.scheduler.exercises.refresh_root"), \
+         patch("app.scheduler.repos.template_root_shas", return_value=set()), \
+         patch("app.scheduler.repos.discover_forks") as mock_disc:
+        sched._discover_tick()
+    assert not mock_disc.called
 
 
 def test_discover_tick_swallows_github_errors(tmp_path: Path):
@@ -171,7 +193,9 @@ def test_discover_tick_swallows_github_errors(tmp_path: Path):
     set_root_repo(conn, "https://github.com/acme/root")
 
     sched = scheduler.Scheduler(cfg)
-    with patch("app.scheduler.repos.discover_forks",
+    with patch("app.scheduler.exercises.refresh_root"), \
+         patch("app.scheduler.repos.template_root_shas", return_value={"abc"}), \
+         patch("app.scheduler.repos.discover_forks",
                side_effect=GitHubError("rate limited")):
         # Must not raise
         sched._discover_tick()

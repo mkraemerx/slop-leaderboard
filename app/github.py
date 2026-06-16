@@ -1,4 +1,4 @@
-"""GitHub REST API client used for fork discovery (FR-01).
+"""GitHub REST API client used for participant-repo discovery (FR-01).
 
 Only the small subset needed by the dashboard is implemented; we deliberately
 avoid pulling in PyGithub to keep the dependency surface small.
@@ -25,6 +25,8 @@ class RepoRef:
     owner: str
     name: str
     url: str
+    is_template: bool = False
+    private: bool = False
 
     @property
     def full_name(self) -> str:
@@ -85,20 +87,24 @@ class GitHubClient:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    def list_forks(self, owner: str, name: str) -> list[RepoRef]:
-        """Return every fork of `owner/name`, paginated until exhausted.
+    def list_org_repos(self, org: str) -> list[RepoRef]:
+        """Return every repository owned by `org`, paginated until exhausted.
+
+        Used by FR-01 discovery: participant repositories are clones of a
+        template bundled in one organisation, so we enumerate the org rather
+        than the (non-existent) fork list.
 
         GitHub returns at most 100 per page; we keep going until a short page.
         """
         results: list[RepoRef] = []
         page = 1
         while True:
-            url = f"{self.BASE_URL}/repos/{owner}/{name}/forks"
+            url = f"{self.BASE_URL}/orgs/{org}/repos"
             try:
                 resp = self._client().get(
                     url,
                     headers=self._headers(),
-                    params={"per_page": 100, "page": page},
+                    params={"per_page": 100, "page": page, "type": "all"},
                 )
             except Exception as exc:  # network failure
                 raise GitHubError(f"github request failed: {exc}") from exc
@@ -108,7 +114,7 @@ class GitHubClient:
                 )
             payload = resp.json()
             if not isinstance(payload, list):
-                raise GitHubError(f"unexpected forks payload type: {type(payload)}")
+                raise GitHubError(f"unexpected org repos payload type: {type(payload)}")
             for item in payload:
                 results.append(_repo_ref_from_api(item))
             if len(payload) < 100:
@@ -116,16 +122,41 @@ class GitHubClient:
             page += 1
         return results
 
+    def repo_contains_commit(self, owner: str, name: str, sha: str) -> bool:
+        """True if `owner/name` contains commit `sha`.
+
+        This is the shared-root-commit link (FR-01): a repo is only a genuine
+        clone of the template if it contains the template's root commit. The
+        check costs one API call and needs no clone — GitHub returns 200 for a
+        present commit and 404/422 for an absent (or unparseable) one.
+        """
+        url = f"{self.BASE_URL}/repos/{owner}/{name}/commits/{sha}"
+        try:
+            resp = self._client().get(url, headers=self._headers())
+        except Exception as exc:  # network failure
+            raise GitHubError(f"github request failed: {exc}") from exc
+        if resp.status_code == 200:
+            return True
+        if resp.status_code in (404, 422):
+            return False
+        raise GitHubError(
+            f"github responded {resp.status_code} for {url}: {resp.text[:200]}"
+        )
+
 
 def _repo_ref_from_api(item: dict) -> RepoRef:
-    """Build a RepoRef from a /repos/{}/{}/forks list item."""
+    """Build a RepoRef from a repo list item (org repos or forks)."""
     owner_obj = item.get("owner") or {}
     owner = owner_obj.get("login") or item.get("full_name", "/").split("/")[0]
     name = item.get("name")
     html_url = item.get("html_url") or f"https://github.com/{owner}/{name}"
     if not owner or not name:
-        raise GitHubError(f"fork list item missing owner/name: {item!r}")
-    return RepoRef(owner=owner, name=name, url=html_url)
+        raise GitHubError(f"repo list item missing owner/name: {item!r}")
+    return RepoRef(
+        owner=owner, name=name, url=html_url,
+        is_template=bool(item.get("is_template", False)),
+        private=bool(item.get("private", False)),
+    )
 
 
 def dedupe_refs(refs: Iterable[RepoRef]) -> list[RepoRef]:

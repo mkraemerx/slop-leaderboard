@@ -20,6 +20,7 @@ from . import (
     exercises as exercises_mod,
     jobs, leaderboard, repos,
 )
+from .github import GitHubClient
 
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -121,25 +122,78 @@ def comparison_page(request: Request, ref_type: str, name: str):
 
 
 @router.get("/forks", response_class=HTMLResponse)
-def forks_page(request: Request):
+def forks_page(request: Request, added: int = 0, skipped: int = 0,
+               failed: int = 0):
     conn = request.app.state.db
+    notice = None
+    if added or skipped or failed:
+        notice = (f"Import: {added} added, {skipped} skipped "
+                  f"(duplicate/unrelated), {failed} failed.")
     ctx = _common(request) | {
         "root": repos.get_root_repo(conn),
         "forks": repos.list_forks(conn),
+        "notice": notice,
     }
     return templates.TemplateResponse(request, "forks.html", ctx)
 
 
-@router.post("/forks")
-def forks_add(request: Request, url: str = Form(...)):
-    conn = request.app.state.db
-    if repos.get_root_repo(conn) is None:
-        raise HTTPException(400, "no root repo configured")
+@router.post("/forks/template")
+def forks_set_template(request: Request, url: str = Form(...)):
+    """(Re)configure the template repository from the UI (FR-01)."""
     try:
-        repos.add_fork_manual(conn, url)
+        repos.set_root_repo(request.app.state.db, url)
     except Exception as exc:
-        raise HTTPException(400, f"add failed: {exc}")
+        raise HTTPException(400, f"invalid template URL: {exc}")
     return RedirectResponse("/forks", status_code=303)
+
+
+@router.post("/forks/reset")
+def forks_reset(request: Request):
+    """Clear the whole setup (template, repos, analysis data, clones) so the
+    installation can be reused. Aliases/ignore list are preserved."""
+    cfg = request.app.state.config
+    repos.reset_all(request.app.state.db, cfg.repos_dir)
+    return RedirectResponse("/forks", status_code=303)
+
+
+@router.post("/forks")
+def forks_add(request: Request, urls: str = Form(...)):
+    """Add one or more participant repos — one URL per line in the text area.
+
+    Each entry passes the same shared-root-commit check discovery uses (when a
+    token is configured). Already-tracked or unrelated repos are skipped, not
+    fatal, so a paste of mixed URLs makes maximal progress.
+    """
+    conn = request.app.state.db
+    root = repos.get_root_repo(conn)
+    if root is None:
+        raise HTTPException(400, "no template repository configured")
+
+    cfg = request.app.state.config
+    gh = root_shas = None
+    if cfg.github_token:
+        gh = GitHubClient(cfg.github_token)
+        root_shas = repos.template_root_shas(cfg.repos_dir, root)
+
+    added = skipped = failed = 0
+    import sqlite3
+    for line in urls.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        try:
+            repos.add_fork_manual(conn, candidate, gh=gh, root_shas=root_shas)
+            added += 1
+        except sqlite3.IntegrityError:
+            skipped += 1          # already tracked
+        except ValueError:
+            skipped += 1          # bad URL or unrelated to the template
+        except Exception:         # noqa: BLE001 — network/API hiccup
+            failed += 1
+    return RedirectResponse(
+        f"/forks?added={added}&skipped={skipped}&failed={failed}",
+        status_code=303,
+    )
 
 
 @router.post("/forks/{fork_id}/sync", response_class=HTMLResponse)

@@ -178,12 +178,38 @@ def test_no_js_add_fork_via_form_post(tmp_path):
     app = _build_app(tmp_path)
     with TestClient(app, follow_redirects=False) as client:
         _login(client)
-        resp = client.post("/forks", data={"url": "https://github.com/alice/root"})
+        resp = client.post("/forks", data={"urls": "https://github.com/alice/root"})
         assert resp.status_code == 303
-        assert resp.headers["location"] == "/forks"
+        assert resp.headers["location"].startswith("/forks?added=1")
         # Visit /forks and check the new row is there
         body = client.get("/forks").text
         assert "alice" in body
+
+
+def test_set_template_via_form_post(tmp_path):
+    app = _build_app(tmp_path, with_root=False)
+    with TestClient(app, follow_redirects=False) as client:
+        _login(client)
+        resp = client.post("/forks/template",
+                           data={"url": "https://github.com/acme/template"})
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/forks"
+    from app.repos import get_root_repo
+    root = get_root_repo(app.state.db)
+    assert root is not None and root.name == "template"
+
+
+def test_reset_clears_repos_and_template(tmp_path):
+    app = _build_app(tmp_path)  # seeds acme/root + a fork below
+    add_fork_manual(app.state.db, "https://github.com/alice/root")
+    with TestClient(app, follow_redirects=False) as client:
+        _login(client)
+        resp = client.post("/forks/reset")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/forks"
+    from app.repos import get_root_repo, list_forks
+    assert get_root_repo(app.state.db) is None
+    assert list_forks(app.state.db) == []
 
 
 def test_no_js_sync_now_redirects_back_to_forks(tmp_path):

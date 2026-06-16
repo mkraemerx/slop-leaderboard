@@ -26,6 +26,15 @@ class Config:
 
     log_level: str
 
+    # Repo names (not full URLs) to skip during org discovery — infrastructure
+    # repos such as build images or shared config. The template itself and any
+    # `is_template` repo are excluded automatically; this covers the rest.
+    discovery_exclude: frozenset[str] = frozenset()
+
+
+def _parse_exclude(raw: str | None) -> frozenset[str]:
+    return frozenset(s.strip() for s in (raw or "").split(",") if s.strip())
+
 
 def load_config(env: dict[str, str] | None = None) -> Config:
     src = env if env is not None else os.environ
@@ -44,4 +53,5 @@ def load_config(env: dict[str, str] | None = None) -> Config:
         sync_interval_minutes=int(src.get("SYNC_INTERVAL_MINUTES", "60")),
         github_webhook_secret=src.get("GITHUB_WEBHOOK_SECRET") or None,
         log_level=(src.get("LOG_LEVEL") or "INFO").upper(),
+        discovery_exclude=_parse_exclude(src.get("DISCOVERY_EXCLUDE")),
     )

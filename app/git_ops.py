@@ -213,6 +213,35 @@ def list_refs(repo_path: Path) -> list[RefInfo]:
     return out
 
 
+def root_commit_shas(repo_path: Path) -> set[str]:
+    """SHAs of every parent-less (root) commit reachable from any ref.
+
+    A clone made from a template repository always contains the template's
+    root commit, so this set is the authoritative link used by FR-01 to tell
+    genuine participant repos apart from unrelated repos in the same org.
+    Usually a single SHA; multiple only if the template has disjoint histories.
+    """
+    import pygit2
+
+    repo = pygit2.Repository(str(repo_path))
+    roots: set[str] = set()
+    seen: set[str] = set()
+    for ref_name in repo.references:
+        try:
+            ref = repo.references[ref_name]
+            tip = ref.peel(pygit2.Commit)
+        except (KeyError, pygit2.GitError, ValueError):
+            continue
+        for commit in repo.walk(tip.id, pygit2.GIT_SORT_NONE):
+            sha = str(commit.id)
+            if sha in seen:
+                continue
+            seen.add(sha)
+            if len(commit.parents) == 0:
+                roots.add(sha)
+    return roots
+
+
 def commits_reachable_from(repo_path: Path, tip_sha: str) -> set[str]:
     """SHAs of every commit reachable from `tip_sha` (inclusive)."""
     import pygit2
