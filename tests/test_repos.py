@@ -1,14 +1,20 @@
-"""Acceptance tests for FR-01 Root Repository & Fork Tracking."""
+"""Acceptance tests for FR-01 Template & Participant Repository Tracking."""
 from __future__ import annotations
 
 import pytest
 
-from app.github import GitHubClient
+from app.aliases import add_alias, list_aliases
+from app.github import RepoRef
 from app.repos import (
     add_fork_manual, discover_forks, get_root_repo, list_forks,
-    remove_root_repo, set_root_repo, update_sync_status,
+    remove_root_repo, reset_all, set_root_repo, update_sync_status,
 )
-from tests.fakes import FakeHttp
+from tests.fakes import FakeGitHub
+
+
+def _ref(owner: str, name: str, **kw) -> RepoRef:
+    return RepoRef(owner=owner, name=name,
+                   url=f"https://github.com/{owner}/{name}", **kw)
 
 
 # AC1: root repo is configured by URL + platform API token
@@ -31,35 +37,46 @@ def test_setting_root_repo_replaces_existing_one(db):
     assert db.execute("SELECT COUNT(*) FROM root_repo").fetchone()[0] == 1
 
 
-# AC2: discovers all forks of the root automatically and adds them
-def test_discover_forks_adds_api_returned_forks(db):
+# AC2: discovers participant clones in the template's org automatically
+def test_discover_forks_adds_org_repos_that_share_the_root(db):
     set_root_repo(db, "https://github.com/acme/root")
-    payload = [
-        {"owner": {"login": "alice"}, "name": "root",
-         "html_url": "https://github.com/alice/root"},
-        {"owner": {"login": "bob"}, "name": "root",
-         "html_url": "https://github.com/bob/root"},
-    ]
-    gh = GitHubClient(token="t", http=FakeHttp(pages=[payload]))
+    gh = FakeGitHub(org_repos=[
+        _ref("acme", "root"),          # the template itself — must be skipped
+        _ref("acme", "alice-clone"),
+        _ref("acme", "bob-clone"),
+    ])
 
-    added = discover_forks(db, gh)
+    added = discover_forks(db, gh, root_shas={"abc"})
 
-    assert {f.owner for f in added} == {"alice", "bob"}
+    assert {f.name for f in added} == {"alice-clone", "bob-clone"}
     forks = list_forks(db)
-    assert {f.owner for f in forks} == {"alice", "bob"}
+    assert {f.name for f in forks} == {"alice-clone", "bob-clone"}
     assert all(f.discovered_via == "api" for f in forks)
+
+
+def test_discover_skips_template_excluded_and_unrelated(db):
+    set_root_repo(db, "https://github.com/acme/root")
+    gh = FakeGitHub(
+        org_repos=[
+            _ref("acme", "other-template", is_template=True),  # flagged template
+            _ref("acme", "infra"),                              # on exclude list
+            _ref("acme", "stranger"),                           # no shared root
+            _ref("acme", "clone"),                              # genuine clone
+        ],
+        contains={"acme/infra", "acme/other-template", "acme/clone"},
+    )
+
+    added = discover_forks(db, gh, root_shas={"abc"}, exclude={"infra"})
+
+    assert {f.name for f in added} == {"clone"}
 
 
 def test_discover_forks_is_idempotent(db):
     set_root_repo(db, "https://github.com/acme/root")
-    payload = [{"owner": {"login": "alice"}, "name": "root",
-                "html_url": "https://github.com/alice/root"}]
-    gh = GitHubClient(token="t", http=FakeHttp(pages=[payload]))
+    org = [_ref("acme", "alice-clone")]
 
-    discover_forks(db, gh)
-    # second run with the same payload must not duplicate
-    gh2 = GitHubClient(token="t", http=FakeHttp(pages=[payload]))
-    added_again = discover_forks(db, gh2)
+    discover_forks(db, FakeGitHub(org_repos=org), root_shas={"abc"})
+    added_again = discover_forks(db, FakeGitHub(org_repos=org), root_shas={"abc"})
 
     assert added_again == []
     assert len(list_forks(db)) == 1
@@ -139,22 +156,63 @@ def test_removing_root_repo_cascades_forks(db):
     assert list_forks(db) == []
 
 
-# Mixed-source: API discovery + manual addition can coexist
+# Mixed-source: org discovery + manual addition can coexist
 def test_api_and_manual_forks_can_coexist(db):
     set_root_repo(db, "https://github.com/acme/root")
-    payload = [{"owner": {"login": "alice"}, "name": "root",
-                "html_url": "https://github.com/alice/root"}]
-    gh = GitHubClient(token="t", http=FakeHttp(pages=[payload]))
-    discover_forks(db, gh)
+    gh = FakeGitHub(org_repos=[_ref("acme", "alice-clone")])
+    discover_forks(db, gh, root_shas={"abc"})
 
-    add_fork_manual(db, "https://github.com/private/root")
+    add_fork_manual(db, "https://github.com/private/clone")
 
-    forks = list_forks(db)
-    by_owner = {f.owner: f for f in forks}
-    assert by_owner["alice"].discovered_via == "api"
+    by_owner = {f.owner: f for f in list_forks(db)}
+    assert by_owner["acme"].discovered_via == "api"
     assert by_owner["private"].discovered_via == "manual"
 
 
 def test_adding_fork_without_root_repo_fails(db):
     with pytest.raises(RuntimeError):
         add_fork_manual(db, "https://github.com/alice/root")
+
+
+# Manual add applies the same shared-root-commit check when verification is on
+def test_manual_add_rejects_repo_not_sharing_template_history(db):
+    set_root_repo(db, "https://github.com/acme/root")
+    gh = FakeGitHub(contains=set())  # contains nothing → no shared root
+
+    with pytest.raises(ValueError):
+        add_fork_manual(db, "https://github.com/x/unrelated",
+                        gh=gh, root_shas={"abc"})
+    assert list_forks(db) == []
+
+
+def test_manual_add_accepts_repo_sharing_template_history(db):
+    set_root_repo(db, "https://github.com/acme/root")
+    gh = FakeGitHub(contains={"x/clone"})
+
+    fork = add_fork_manual(db, "https://github.com/x/clone",
+                           gh=gh, root_shas={"abc"})
+
+    assert fork.owner == "x"
+    assert fork.discovered_via == "manual"
+
+
+# Reset: wipe the setup for reuse, keep cohort-independent identity data
+def test_reset_all_wipes_setup_but_preserves_aliases(db, tmp_path):
+    set_root_repo(db, "https://github.com/acme/root")
+    add_fork_manual(db, "https://github.com/alice/root")
+    db.execute("INSERT INTO root_refs (ref_name, ref_type) VALUES ('main', 'branch')")
+    db.execute("INSERT INTO root_commits (sha) VALUES ('deadbeef')")
+    add_alias(db, "alias@x.com", "canonical@x.com")
+    repos_dir = tmp_path / "repos"
+    clone = repos_dir / "acme__root"
+    clone.mkdir(parents=True)
+    (clone / "HEAD").write_text("ref: refs/heads/main\n")
+
+    reset_all(db, repos_dir)
+
+    assert get_root_repo(db) is None
+    assert list_forks(db) == []
+    assert db.execute("SELECT COUNT(*) FROM root_refs").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM root_commits").fetchone()[0] == 0
+    assert not clone.exists()
+    assert len(list_aliases(db)) == 1  # preserved across reset

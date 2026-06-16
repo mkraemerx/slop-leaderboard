@@ -1,17 +1,25 @@
-"""Business logic for FR-01: root repo + fork tracking.
+"""Business logic for FR-01: template repo + participant-repo tracking.
 
 The web layer (app.web) and any future background workers call into these
 functions; SQL lives here so the boundaries from QR-04 stay clean.
+
+Terminology: the single tracked "root_repo" row is the *template*; the
+"forks" table holds the *participant repositories* (clones of that template,
+bundled in one organisation). The schema keeps the older names; the concepts
+map one-to-one.
 """
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
-from . import jobs
+from . import git_ops, jobs
 from .db import transaction
 from .github import GitHubClient, GitHubError, RepoRef, parse_github_url
+from .storage import repo_path
 
 
 @dataclass(frozen=True)
@@ -75,6 +83,49 @@ def remove_root_repo(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM root_repo WHERE id = 1")
 
 
+def template_root_shas(repos_dir: Path, root: "RootRepo") -> set[str]:
+    """Root-commit SHAs of the locally cloned template, or an empty set if the
+    template has not been fetched yet. Used as the lineage filter for both
+    discovery and manual adds."""
+    local = repo_path(repos_dir, root.owner, root.name)
+    try:
+        return git_ops.root_commit_shas(local)
+    except Exception:  # noqa: BLE001 — missing/corrupt clone → "can't verify"
+        return set()
+
+
+def repo_shares_root(gh: GitHubClient, ref: RepoRef, root_shas: set[str]) -> bool:
+    """True if `ref` contains any of the template's root commits (one API call
+    per candidate SHA, short-circuiting on the first hit)."""
+    for sha in root_shas:
+        if gh.repo_contains_commit(ref.owner, ref.name, sha):
+            return True
+    return False
+
+
+def reset_all(conn: sqlite3.Connection, repos_dir: Path) -> None:
+    """Wipe everything tied to the current setup so the installation can be
+    reused: the template, every participant repo and its analysis data
+    (FK cascade), the root ref/commit caches, and the local clones on disk.
+
+    Author aliases and the ignore list are deliberately *preserved* — they are
+    cohort-independent identity data (clearing them is a separate action).
+    """
+    with transaction(conn):
+        conn.execute("DELETE FROM root_repo WHERE id = 1")  # cascades forks → …
+        conn.execute("DELETE FROM root_refs")
+        conn.execute("DELETE FROM root_commits")
+    if repos_dir.exists():
+        for child in repos_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+
+
 def list_forks(conn: sqlite3.Connection) -> list[Fork]:
     rows = conn.execute(
         """
@@ -87,28 +138,52 @@ def list_forks(conn: sqlite3.Connection) -> list[Fork]:
     return [_row_to_fork(r) for r in rows]
 
 
-def add_fork_manual(conn: sqlite3.Connection, url: str) -> Fork:
-    """Add a fork by URL (used when API discovery is unavailable or for
-    private forks the platform API does not return)."""
+def add_fork_manual(
+    conn: sqlite3.Connection, url: str, *,
+    gh: GitHubClient | None = None, root_shas: set[str] | None = None,
+) -> Fork:
+    """Add a participant repo by URL (for repos the org listing misses, e.g.
+    ones living outside the template's org).
+
+    When `gh` and `root_shas` are both supplied, the repo must share the
+    template's root commit or a ValueError is raised — the same lineage check
+    discovery applies. Without them (no token configured) the repo is trusted
+    as entered.
+    """
     ref = parse_github_url(url)
+    if gh is not None and root_shas:
+        if not repo_shares_root(gh, ref, root_shas):
+            raise ValueError(
+                f"{ref.full_name} does not share the template's history"
+            )
     return _insert_fork(conn, ref, discovered_via="manual")
 
 
-def discover_forks(conn: sqlite3.Connection, gh: GitHubClient) -> list[Fork]:
-    """Call the platform API and add any forks not already tracked.
+def discover_forks(
+    conn: sqlite3.Connection, gh: GitHubClient, root_shas: set[str], *,
+    exclude: frozenset[str] | set[str] = frozenset(),
+) -> list[Fork]:
+    """List the template org's repositories and add any genuine participant
+    clones not already tracked.
 
-    Returns the list of *newly* added forks. Existing forks are left intact —
-    this is safe to call repeatedly.
+    A repo is added only if it is not the template itself, not flagged as a
+    template, not on the `exclude` list, and shares the template's root commit
+    (`root_shas`, verified via one API call per repo).
 
-    Raises GitHubError if the API call fails; the caller decides whether to
-    surface the error or fall back to manual addition.
+    Returns the list of *newly* added repos. Existing ones are left intact —
+    safe to call repeatedly. Raises GitHubError if the org listing fails; the
+    caller decides whether to surface the error.
     """
     root = get_root_repo(conn)
     if root is None:
         raise RuntimeError("no root repo configured")
-    refs = gh.list_forks(root.owner, root.name)
+    refs = gh.list_org_repos(root.owner)
     added: list[Fork] = []
     for ref in refs:
+        if ref.url == root.url or ref.is_template or ref.name in exclude:
+            continue
+        if not repo_shares_root(gh, ref, root_shas):
+            continue  # unrelated repo that merely lives in the same org
         try:
             fork = _insert_fork(conn, ref, discovered_via="api")
         except sqlite3.IntegrityError:
@@ -187,6 +262,7 @@ def _row_to_fork(row: sqlite3.Row) -> Fork:
 
 __all__ = [
     "RootRepo", "Fork",
-    "get_root_repo", "set_root_repo", "remove_root_repo",
+    "get_root_repo", "set_root_repo", "remove_root_repo", "reset_all",
+    "template_root_shas", "repo_shares_root",
     "list_forks", "add_fork_manual", "discover_forks", "update_sync_status",
 ]

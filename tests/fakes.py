@@ -38,3 +38,26 @@ class FakeHttp:
         if page_idx < 0 or page_idx >= len(self.pages):
             return FakeResponse(200, [])
         return FakeResponse(200, self.pages[page_idx])
+
+
+class FakeGitHub:
+    """Duck-typed stand-in for `GitHubClient`, used by FR-01 discovery tests.
+
+    `discover_forks` only needs `list_org_repos` and `repo_contains_commit`, so
+    we model exactly those two. `contains` is the set of "owner/name" repos that
+    DO contain the template root commit; `None` means every repo shares it.
+    """
+
+    def __init__(self, org_repos=None, contains=None) -> None:
+        self.org_repos = list(org_repos or [])
+        self._contains = contains
+        self.contains_calls: list[tuple[str, str, str]] = []
+
+    def list_org_repos(self, org: str):
+        return list(self.org_repos)
+
+    def repo_contains_commit(self, owner: str, name: str, sha: str) -> bool:
+        self.contains_calls.append((owner, name, sha))
+        if self._contains is None:
+            return True
+        return f"{owner}/{name}" in self._contains

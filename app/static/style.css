@@ -27,7 +27,19 @@ tbody tr:hover { background: #fafbff; }
 .status-error { color: var(--err); }
 
 .filters { margin: 1em 0; display: flex; gap: 1em; align-items: center; }
-.add-fork { margin: 1em 0; }
+.add-fork, .set-template { margin: 1em 0; }
+.add-fork label, .set-template label { display: block; margin-bottom: 0.4em; }
+.add-fork textarea { width: 100%; font: inherit; padding: 0.3em 0.5em;
+                     border: 1px solid var(--border); border-radius: 0.25em; }
+.set-template input { width: 60%; min-width: 18em; font: inherit;
+                      padding: 0.3em 0.5em; }
+.muted { color: var(--muted); }
+.notice { background: #eef; border: 1px solid #ccd; color: #335;
+          padding: 0.5em 0.75em; border-radius: 0.25em; }
+.reset-all { margin: 2em 0 0; padding-top: 1em;
+             border-top: 1px solid var(--border); }
+button.danger { color: white; background: var(--err); border: none;
+                padding: 0.4em 0.8em; border-radius: 0.25em; cursor: pointer; }
 .badge { font-size: 0.75em; background: #eef; padding: 0.1em 0.5em;
          border-radius: 0.5em; color: #335; }
 

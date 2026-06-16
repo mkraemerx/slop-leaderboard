@@ -5,12 +5,16 @@ Two interval jobs run inside a single APScheduler BackgroundScheduler:
 - `_analysis_tick`: drains the analysis_jobs queue by calling
   `analysis.run_one_job` until it returns None. Runs every 30 seconds.
 - `_discover_tick`: every `SYNC_INTERVAL_MINUTES`,
-  (1) refreshes the configured root repo (root_refs + root_commits) so
+  (1) refreshes the configured template repo (root_refs + root_commits) so
       starter / instructor commits never get attributed to participants,
-  (2) calls `repos.discover_forks` to pick up new forks of the root,
-  (3) enqueues a fresh `sync` job for every existing fork that has no
-      queued or running work — this both keeps fresh forks fresh and
-      retries forks stuck in `error` state.
+  (2) calls `repos.discover_forks` to pick up new participant clones in the
+      template's org (filtered by shared root commit),
+  (3) enqueues a fresh `sync` job for every existing repo that has no
+      queued or running work — this both keeps fresh repos fresh and
+      retries repos stuck in `error` state.
+
+The template must be refreshed (step 1) before discovery (step 2) so its root
+commit is known locally — that ordering is relied upon here.
 
 Each tick opens its own SQLite connection — the web layer's connection on
 `app.state.db` is reserved for request handlers, and scheduler threads must
@@ -117,12 +121,26 @@ class Scheduler:
                     log.debug("root refresh: ok")
             if token:
                 gh = GitHubClient(token)
-                try:
-                    added = repos.discover_forks(conn, gh)
-                except GitHubError as exc:
-                    log.warning("fork discovery failed: %s", exc)
+                root = repos.get_root_repo(conn)
+                root_shas = (
+                    repos.template_root_shas(self.cfg.repos_dir, root)
+                    if root is not None else set()
+                )
+                if not root_shas:
+                    # Without the template's root commit we can't tell genuine
+                    # clones from unrelated org repos — skip rather than guess.
+                    log.warning("skipping discovery: template root commit "
+                                "unknown (root not fetched yet?)")
                 else:
-                    log.debug("fork discovery: %d new fork(s)", len(added))
+                    try:
+                        added = repos.discover_forks(
+                            conn, gh, root_shas,
+                            exclude=self.cfg.discovery_exclude,
+                        )
+                    except GitHubError as exc:
+                        log.warning("repo discovery failed: %s", exc)
+                    else:
+                        log.debug("repo discovery: %d new repo(s)", len(added))
             self._enqueue_periodic_resync(conn)
         log.debug("discover tick: done")
 
